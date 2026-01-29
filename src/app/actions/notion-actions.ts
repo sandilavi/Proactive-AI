@@ -22,7 +22,7 @@ interface NotionPage {
 }
 
 export async function fetchNotionTasks() {
-  const rawTasks = (await getRawNotionTasks()) as unknown as NotionPage[];
+  const rawTasks = (await getRawNotionTasks()) as unknown as NotionPage[]; // Await holds the function until data fetches
   
   return rawTasks.map((page) => ({
     id: page.id,

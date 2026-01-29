@@ -4,7 +4,7 @@ export const notion = new Client({
     auth: process.env.NOTION_TOKEN,
 });
     
-export async function getRawNotionTasks() {
+export async function getRawNotionTasks() { // Async function waits until data fetches
     // First, retrieve the database to get its data_source_id
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const database: any = await notion.databases.retrieve({
