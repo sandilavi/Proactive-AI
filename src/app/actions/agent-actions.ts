@@ -16,7 +16,7 @@ export interface AgentSuggestion {
   confidence: number;
 }
 
-export type AgentActions = "CREATE" | "READ" | "UPDATE" | "DELETE" | "SUGGEST";
+export type AgentActions = "CREATE" | "READ" | "UPDATE" | "DELETE" | "SUGGEST" | "OTHER";
 export interface AgentResponse {
   action: AgentActions;
   data: {
@@ -68,7 +68,7 @@ export async function getAgentSuggestion( tasks: NotionTask[]) : Promise<AgentSu
 }
 
 
-// Takes user prompt and converts it into json format
+// Analyze user prompt and decides which action needs to take
 export async function processUserPrompt( prompt: string, taskContext: string ): Promise<AgentResponse> {
   const today = new Date().toISOString().split("T")[0];
 
@@ -90,15 +90,16 @@ export async function processUserPrompt( prompt: string, taskContext: string ): 
 
         Analyze the user's request and categorize it into one of these actions:
         1. CREATE: User wants to add a new task.
-        2. READ: User just wants to see their tasks (e.g., "show my tasks", "what are my tasks").
+        2. READ: User just wants to see their tasks.
         3. UPDATE: User wants to change an existing task status.
         4. DELETE: User wants to delete a task.
         5. SUGGEST: User wants advice or prioritization (e.g., "what should I do next?", "what is urgent?").
+        6. OTHER: Use this if the user asks a general question, or anything unrelated to managing Notion tasks (e.g., "What is the longest river?").
 
         For CREATE, extract: 'title', 'status' (default: "To Do"), and 'date'.
         For UPDATE or DELETE, extract: 'taskId'. For UPDATE, also extract: 'status'.
         
-        Output MUST be JSON: { "action": "CREATE" | "READ" | "UPDATE" | "DELETE" | "SUGGEST", "data": { ... } }`,
+        Output MUST be JSON: { "action": "CREATE" | "READ" | "UPDATE" | "DELETE" | "SUGGEST" | "OTHER", "data": { ... } }`,
       },
       { role: "user", content: prompt },
     ],
@@ -219,6 +220,14 @@ export async function executeUserPrompt(prompt: string) {
   else if (decision.action === "SUGGEST") {
     // Run the Logic Engine for prioritization advice
     aiSuggestion = await getAgentSuggestion(tasks);
+  }
+  else if (decision.action === "OTHER") {
+    return {
+      success: true,
+      message: "I'm a task assistant, specialized in managing tasks. Ask me something related with managing your tasks.",
+      actionTaken: decision,
+      notionResponse: null
+    };
   }
 
   // Pass to CRUD (READ/SUGGEST will return success without Notion changes)
