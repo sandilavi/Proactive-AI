@@ -1,41 +1,39 @@
-'use client';
-import { useState, useTransition } from 'react';
-import { executeUserPrompt } from '@/app/actions/agent-actions';
+"use client";
+import { useState, useTransition } from "react";
+import { executeUserPrompt } from "@/app/actions/agent-actions";
 
 export default function CommandInput() {
-  const [prompt, setPrompt] = useState('');
-  const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-  const [message, setMessage] = useState('');
+  const [prompt, setPrompt] = useState("");
+  const [status, setStatus] = useState<
+    "idle" | "loading" | "success" | "error"
+  >("idle");
+  const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setStatus('loading');
+    setStatus("loading");
 
     startTransition(async () => {
       try {
         const data = await executeUserPrompt(prompt);
 
         if (data.success) {
-          setStatus('success');
-          setMessage(
-            data.actionTaken
-              ? `Success: ${data.actionTaken.action} executed!`
-              : data.message || 'Command executed.'
-          );
-          setPrompt('');
+          setMessage(data.message);
+          setStatus("success");
+          setPrompt("");
         } else {
-          setStatus('error');
-          setMessage(data.message || 'Failed to execute command.');
+          setMessage(data.message || "Something went wrong");
+          setStatus("error");
         }
       } catch {
-        setStatus('error');
-        setMessage('Failed to execute command.');
+        setStatus("error");
+        setMessage("Failed to execute command.");
       }
     });
   };
 
-  const loading = status === 'loading' || isPending;
+  const loading = status === "loading" || isPending;
 
   return (
     <div className="p-4 border rounded-lg shadow-sm bg-white max-w-xl mx-auto mt-8">
@@ -57,17 +55,17 @@ export default function CommandInput() {
             disabled={loading}
             className="px-4 py-2 bg-black text-white rounded-md hover:bg-gray-800 disabled:bg-gray-400"
           >
-            {loading ? 'Processing...' : 'Run'}
+            {loading ? "Processing..." : "Run"}
           </button>
         </div>
         {message && (
-          <p
+          <div
             className={`text-xs mt-2 ${
-              status === 'success' ? 'text-green-600' : 'text-red-600'
+              status === "success" ? "text-green-600" : "text-red-600"
             }`}
           >
-            {message}
-          </p>
+            <div className="whitespace-pre-wrap text-green-700">{message}</div>
+          </div>
         )}
       </form>
     </div>

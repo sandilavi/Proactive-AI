@@ -22,7 +22,7 @@ interface NotionPage {
 }
 
 export async function fetchNotionTasks() {
-  const rawTasks = (await getRawNotionTasks()) as unknown as NotionPage[]; // Await holds the function until data fetches
+  const rawTasks = (await getRawNotionTasks()) as unknown as NotionPage[];
   
   return rawTasks.map((page) => ({
     id: page.id,
@@ -57,14 +57,21 @@ export async function createNotionTask(title: string, statusName: string, date?:
   }
 }
 
-export async function updateNotionTask(taskId: string, statusName: string) {
+export async function updateNotionTask(taskId: string, statusName?: string, date?: string) {
   try {
     const response = await notion.pages.update({
       page_id: taskId,
       properties: {
-        'Status': {
-          status: { name: statusName },
-        },
+        ...(statusName && {
+          'Status': {
+            status: { name: statusName },
+          },
+        }),
+        ...(date && {
+          'Date': {
+            date: { start: date },
+          },
+        }),
       },
     });
     return { success: true, data: response };

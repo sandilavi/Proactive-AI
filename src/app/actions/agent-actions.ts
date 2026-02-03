@@ -1,5 +1,6 @@
 "use server";
 import { groq } from "@/lib/groq";
+import { fetchNotionTasks } from "./notion-actions";
 
 export interface NotionTask {
   id: string;
@@ -8,17 +9,16 @@ export interface NotionTask {
   deadline?: string;
 }
 
-export interface AgentResponse {
+export interface AgentSuggestion {
   suggestion: string;
   reason: string;
   priority: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
   confidence: number;
 }
 
-export type AgentDecisionAction = "CREATE" | "UPDATE" | "DELETE" | "SUGGEST";
-
-export interface AgentDecision {
-  action: AgentDecisionAction;
+export type AgentActions = "CREATE" | "READ" | "UPDATE" | "DELETE" | "SUGGEST";
+export interface AgentResponse {
+  action: AgentActions;
   data: {
     title?: string;
     status?: string;
@@ -27,13 +27,19 @@ export interface AgentDecision {
   };
 }
 
-// Gives which task needs to do for the user based on urgency (For proactive suggestions)
-export async function getAgentSuggestion(tasks: NotionTask[]): Promise<AgentResponse> {
-  const today = new Date().toISOString().split('T')[0];
 
-  const taskContext = tasks.map((t: NotionTask) => 
-    `- ${t.name} (Status: ${t.status || 'N/A'}, Deadline: ${t.deadline || 'No Deadline'})`
-  ).join("\n");
+// Gives which task needs to do for the user based on urgency (For proactive suggestions)
+export async function getAgentSuggestion( tasks: NotionTask[]) : Promise<AgentSuggestion> {
+  const today = new Date().toISOString().split("T")[0];
+
+  const taskContext = tasks
+    .map(
+      (t: NotionTask) =>
+        `- ${t.name} (Status: ${t.status || "N/A"}, Deadline: ${
+          t.deadline || "No Deadline"
+        })`
+    )
+    .join("\n");
 
   const response = await groq.chat.completions.create({
     model: "llama-3.3-70b-versatile",
@@ -50,20 +56,21 @@ export async function getAgentSuggestion(tasks: NotionTask[]): Promise<AgentResp
 
         FORMATTING RULES:
         1. The 'reason' MUST follow this structure: "I'm recommending you to take [Task Name] because [specific logic about deadlines, days remaining, or status]."
-        2. Output MUST be a valid JSON object with: 'suggestion', 'reason', 'priority', and 'confidence' (0-1).`
+        2. Output MUST be a valid JSON object with: 'suggestion', 'reason', 'priority', and 'confidence' (0-1).`,
       },
-      { role: "user", content: `Analyze these tasks:\n${taskContext}` }
+      { role: "user", content: `Analyze these tasks:\n${taskContext}` },
     ],
-    response_format: { type: "json_object" }
+    response_format: { type: "json_object" },
   });
 
   const content = response.choices[0]?.message?.content || "{}";
-  return JSON.parse(content) as AgentResponse;
+  return JSON.parse(content) as AgentSuggestion;
 }
 
+
 // Takes user prompt and converts it into json format
-export async function processUserPrompt(prompt: string): Promise<AgentDecision> {
-  const today = new Date().toISOString().split('T')[0];
+export async function processUserPrompt( prompt: string, taskContext: string ): Promise<AgentResponse> {
+  const today = new Date().toISOString().split("T")[0];
 
   const response = await groq.chat.completions.create({
     model: "llama-3.3-70b-versatile",
@@ -71,6 +78,9 @@ export async function processUserPrompt(prompt: string): Promise<AgentDecision> 
       {
         role: "system",
         content: `You are a Priority Logic Engine. Today is ${today}.
+
+        EXISTING TASKS:
+        ${taskContext}
 
         DATE RULES:
         1. Use ${today} as your anchor date.
@@ -80,40 +90,44 @@ export async function processUserPrompt(prompt: string): Promise<AgentDecision> 
 
         Analyze the user's request and categorize it into one of these actions:
         1. CREATE: User wants to add a new task.
-        2. UPDATE: User wants to change an existing task status.
-        3. SUGGEST: User wants you to look at their list and give advice.
-        4. DELETE: User wants to delete/archive a task (requires taskId).
+        2. READ: User just wants to see their tasks (e.g., "show my tasks", "what are my tasks").
+        3. UPDATE: User wants to change an existing task status.
+        4. DELETE: User wants to delete a task.
+        5. SUGGEST: User wants advice or prioritization (e.g., "what should I do next?", "what is urgent?").
 
         For CREATE, extract: 'title', 'status' (default: "To Do"), and 'date'.
         For UPDATE or DELETE, extract: 'taskId'. For UPDATE, also extract: 'status'.
         
-        Output MUST be JSON: { "action": "CREATE" | "UPDATE" | "DELETE" | "SUGGEST", "data": { ... } }`
+        Output MUST be JSON: { "action": "CREATE" | "READ" | "UPDATE" | "DELETE" | "SUGGEST", "data": { ... } }`,
       },
-      { role: "user", content: prompt }
+      { role: "user", content: prompt },
     ],
-    response_format: { type: "json_object" }
+    response_format: { type: "json_object" },
   });
 
   const content = response.choices[0]?.message?.content || "{}";
-  return JSON.parse(content) as AgentDecision;
+  return JSON.parse(content) as AgentResponse;
 }
 
+
 // Understand status of the task based on user prompt
-function normalizeStatus(input?: string): "Not started" | "In Progress" | "Done" {
+function normalizeStatus( input?: string ): "Not started" | "In Progress" | "Done" {
   const s = (input ?? "").trim().toLowerCase();
   if (s === "done" || s === "complete" || s === "completed") return "Done";
-  if (s === "in progress" || s === "inprogress" || s === "in-process" || s === "inprocess") return "In Progress";
+  if (s === "in progress" || s === "inprogress" || s === "in-process" || s === "inprocess")
+    return "In Progress";
   return "Not started";
 }
 
-// Performs notion CRUD based on JSON input
-export async function performNotionCRUD( action: AgentDecisionAction, data: AgentDecision["data"]): 
-  Promise<{ success: boolean; message: string; data?: unknown }> {
-  const { createNotionTask, updateNotionTask, deleteNotionTask } = await import("./notion-actions");
 
-  if (action === "SUGGEST") {
-    return { success: true, message: "No execution needed for SUGGEST." };
-  }
+// Performs notion CRUD based on JSON input
+export async function performNotionCRUD(
+  action: AgentActions,
+  data: AgentResponse["data"],
+  aiSuggestion?: AgentSuggestion,
+  listMessage?: string
+): Promise<{ success: boolean; message: string; data?: unknown }> {
+  const { createNotionTask, updateNotionTask, deleteNotionTask } = await import("./notion-actions");
 
   if (action === "CREATE") {
     const title = (data.title ?? "").trim() || "New Task";
@@ -122,33 +136,57 @@ export async function performNotionCRUD( action: AgentDecisionAction, data: Agen
     return {
       success: result.success,
       message: result.success ? "Task created." : "Failed to create task.",
-      data: result
+      data: result,
+    };
+  }
+
+  if (action === "READ") {
+    return { 
+      success: true, 
+      message: listMessage || "Action completed.", 
+      data: aiSuggestion 
     };
   }
 
   if (action === "UPDATE") {
-    if (!data.taskId) return { success: false, message: "Missing taskId for UPDATE." };
-    const status = normalizeStatus(data.status);
-    const result = await updateNotionTask(data.taskId, status);
+    if (!data.taskId)
+      return { success: false, message: "Missing taskId for UPDATE." };
+
+    // Normalize status if it exists in the data
+    const status = data.status ? normalizeStatus(data.status) : undefined;
+
+    // Pass both status and date to the update function
+    const result = await updateNotionTask(data.taskId, status, data.date);
+
     return {
       success: result.success,
       message: result.success ? "Task updated." : "Failed to update task.",
-      data: result
+      data: result,
     };
   }
 
   if (action === "DELETE") {
-    if (!data.taskId) return { success: false, message: "Missing taskId for DELETE." };
+    if (!data.taskId)
+      return { success: false, message: "Missing taskId for DELETE." };
     const result = await deleteNotionTask(data.taskId);
     return {
       success: result.success,
-      message: result.success ? "Task archived." : "Failed to archive task.",
-      data: result
+      message: result.success ? "Task deleted." : "Failed to delete task.",
+      data: result,
+    };
+  }
+
+  if (action === "SUGGEST") {
+    return { 
+      success: true, 
+      message: aiSuggestion?.reason || "Action completed.", 
+      data: aiSuggestion 
     };
   }
 
   return { success: false, message: `Unsupported action: ${action}` };
 }
+
 
 // Execute user prompt
 export async function executeUserPrompt(prompt: string) {
@@ -161,12 +199,34 @@ export async function executeUserPrompt(prompt: string) {
     };
   }
 
-  const decision = await processUserPrompt(prompt);
-  const result = await performNotionCRUD(decision.action, decision.data);
+  const tasks = await fetchNotionTasks();
+  const taskContext = tasks.map(t => `- Name: "${t.name}", ID: "${t.id}"`).join("\n");
+  const decision = await processUserPrompt(prompt, taskContext);
+
+  let message = "";
+  let aiSuggestion;
+
+  if (decision.action === "READ") {
+    // Format the current tasks as a list
+    message = tasks.length > 0 
+    ? `Here are your current tasks:\n\n` + 
+    tasks.map(t => {
+      const deadline = t.deadline ? ` (Due: ${t.deadline})` : " (No deadline)";
+      return `• ${t.name} [${t.status}]${deadline}`;
+    }).join("\n")
+    : "You have no tasks in your list.";
+  } 
+  else if (decision.action === "SUGGEST") {
+    // Run the Logic Engine for prioritization advice
+    aiSuggestion = await getAgentSuggestion(tasks);
+  }
+
+  // Pass to CRUD (READ/SUGGEST will return success without Notion changes)
+  const result = await performNotionCRUD(decision.action, decision.data, aiSuggestion, message);
 
   return {
     success: result.success,
-    message: result.message,
+    message: message || result.message,
     actionTaken: decision,
     notionResponse: result,
   };
