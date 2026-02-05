@@ -64,10 +64,10 @@ export default function CommandInput() {
     <main className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-200 pt-8 pb-12 px-4 relative">
       <div className="max-w-2xl mx-auto">
         {/* Help Icon Button */}
-        <div className="flex justify-end mb-4">
+        <div className="flex justify-end mb-4 pr-2 md:pr-4">
           <button 
             onClick={() => setShowHelp(!showHelp)}
-            className="p-2 bg-white rounded-full shadow-md hover:bg-blue-50 transition-all border border-slate-200 text-blue-600"
+            className="p-2 bg-white rounded-full shadow-md hover:bg-blue-50 transition-all border border-slate-200 text-blue-600 cursor-pointer"
             title="Show Suggestions"
           >
             {showHelp ? <X size={20} /> : <Info size={20} />}
@@ -84,7 +84,7 @@ export default function CommandInput() {
 
         {/* Suggestion Popup */}
         {showHelp && (
-          <div className="absolute top-24 right-4 md:right-1/2 md:translate-x-1/2 z-50 w-72 bg-white/90 backdrop-blur-xl border border-blue-100 shadow-2xl rounded-2xl p-4 animate-in zoom-in-95 duration-200">
+          <div className="absolute top-24 right-2 md:right-8 md:translate-x-0 z-50 w-72 bg-white/90 backdrop-blur-xl border border-blue-100 shadow-2xl rounded-2xl p-4 animate-in zoom-in-95 duration-200">
             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
               Try these prompts
             </h3>
@@ -120,7 +120,7 @@ export default function CommandInput() {
                 <button
                   type="submit"
                   disabled={isLoading}
-                  className="absolute right-2 top-2 p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-50"
+                  className="absolute right-2 top-2 p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
                 >
                   {isLoading ? (
                     <div className="animate-spin h-5 w-5 border-2 border-blue-600 border-t-transparent rounded-full" />
