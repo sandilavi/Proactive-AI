@@ -1,5 +1,5 @@
 "use server";
-import { groq } from "@/lib/groq";
+import { groq, GROQ_MODEL } from "@/lib/groq";
 import { fetchNotionTasks } from "./notion-actions";
 
 export interface NotionTask {
@@ -16,7 +16,7 @@ export interface AgentSuggestion {
   confidence: number;
 }
 
-export type AgentActions = "CREATE" | "READ" | "UPDATE" | "DELETE" | "SUGGEST"  | "UNCLEAR"  | "OTHER";
+export type AgentActions = "CREATE" | "READ" | "UPDATE" | "DELETE" | "SUGGEST" | "UNCLEAR" | "OTHER";
 export interface AgentResponse {
   action: AgentActions;
   data: {
@@ -30,20 +30,19 @@ export interface AgentResponse {
 
 
 // Gives which task needs to do for the user based on urgency (For proactive suggestions)
-export async function getAgentSuggestion( tasks: NotionTask[]) : Promise<AgentSuggestion> {
+export async function getAgentSuggestion(tasks: NotionTask[]): Promise<AgentSuggestion> {
   const today = new Date().toISOString().split("T")[0];
 
   const taskContext = tasks
     .map(
       (t: NotionTask) =>
-        `- ${t.name} (Status: ${t.status || "N/A"}, Deadline: ${
-          t.deadline || "No Deadline"
+        `- ${t.name} (Status: ${t.status || "N/A"}, Deadline: ${t.deadline || "No Deadline"
         })`
     )
     .join("\n");
 
   const response = await groq.chat.completions.create({
-    model: "llama-3.1-8b-instant",
+    model: GROQ_MODEL,
     messages: [
       {
         role: "system",
@@ -74,7 +73,7 @@ export async function processUserPrompt(prompt: string, taskContext: string, use
   const today = new Date().toISOString().split("T")[0];
 
   const response = await groq.chat.completions.create({
-    model: "llama-3.1-8b-instant",
+    model: GROQ_MODEL,
     messages: [
       {
         role: "system",
@@ -146,7 +145,7 @@ export async function processUserPrompt(prompt: string, taskContext: string, use
 
 
 // Understand status of the task based on user prompt
-function normalizeStatus( input?: string ): "Not started" | "In Progress" | "Done" {
+function normalizeStatus(input?: string): "Not started" | "In Progress" | "Done" {
   const s = (input ?? "").trim().toLowerCase();
   if (s === "done" || s === "completed") return "Done";
   if (s === "in progress" || s === "ongoing") return "In Progress";
@@ -161,7 +160,7 @@ function formatDateAndTime(dateStr: string): string {
 
   try {
     const date = new Date(dateStr);
-    
+
     // Extract parts for YYYY-MM-DD
     const yyyy = date.getFullYear();
     const mm = String(date.getMonth() + 1).padStart(2, '0');
@@ -201,10 +200,10 @@ export async function performNotionCRUD(
   }
 
   if (action === "READ") {
-    return { 
-      success: true, 
-      message: listMessage || "Action completed.", 
-      data: aiSuggestion 
+    return {
+      success: true,
+      message: listMessage || "Action completed.",
+      data: aiSuggestion
     };
   }
 
@@ -237,10 +236,10 @@ export async function performNotionCRUD(
   }
 
   if (action === "SUGGEST") {
-    return { 
-      success: true, 
-      message: aiSuggestion?.reason || "Action completed.", 
-      data: aiSuggestion 
+    return {
+      success: true,
+      message: aiSuggestion?.reason || "Action completed.",
+      data: aiSuggestion
     };
   }
 
@@ -267,17 +266,17 @@ export async function executeUserPrompt(prompt: string, userOffset: string = "+0
   let aiSuggestion;
 
   if (decision.action === "READ") {
-    message = tasks.length > 0 
-    ? `Here are your current tasks:\n\n` + 
-    tasks.map(t => {
-      // Use the readable date and time format
-      const deadline = t.deadline 
-        ? ` (Due: ${formatDateAndTime(t.deadline)})` 
-        : " (No deadline)";
-      return `• ${t.name} [${t.status}]${deadline}`;
-    }).join("\n")
-    : "You have no tasks in your list.";
-  } 
+    message = tasks.length > 0
+      ? `Here are your current tasks:\n\n` +
+      tasks.map(t => {
+        // Use the readable date and time format
+        const deadline = t.deadline
+          ? ` (Due: ${formatDateAndTime(t.deadline)})`
+          : " (No deadline)";
+        return `• ${t.name} [${t.status}]${deadline}`;
+      }).join("\n")
+      : "You have no tasks in your list.";
+  }
   else if (decision.action === "SUGGEST") {
     // Run the Logic Engine for prioritization advice
     aiSuggestion = await getAgentSuggestion(tasks);
