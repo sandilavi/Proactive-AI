@@ -1,0 +1,1191 @@
+﻿Informatics Institute of Technology - IIT 
+
+
+
+INFORMATICS INSTITUTE OF TECHNOLOGY
+In Collaboration with
+UNIVERSITY OF WESTMINSTER
+
+
+
+
+ProActiveAI : A Context-Aware Proactive AI Framework for Explainable Task Management
+
+
+
+
+Project Proposal and Requirements Specification by
+Mr. Widana Gamage Sandila Vihanga
+
+
+Supervised by
+Mr. Dilum De Silva
+
+
+
+
+
+
+
+
+Submitted in partial fulfilment of the requirements for the BSc (Hons) Computer Science Degree at the University of Westminster
+
+
+November 2025
+ABSTRACT
+This project proposes the development of an agentic AI system which is capable of reasoning, decision support and explainable suggestions. Unlike traditional agentic AI systems which rely solely on user inputs, this system features a proactive reasoning layer designed to anticipate user needs and provide actionable guidance while maintaining transparency in its reasoning process. The architecture of this system includes the following core modules: perception, memory, decision making and action which enables the agent to observe context, reason about user goals and execute relevant actions. The system demonstrates these capabilities within a focused domain of task management, integration with external APIs like Notion to perform real world actions like scheduling, updating and managing tasks. The project's primary focus is to showcase an agentic AI prototype which combines proactivity, explainability and context-aware assistance which pave the way toward a next generation intelligent system.
+Subject Descriptors:
+* Computing methodologies -> Artificial Intelligence -> Autonomous Agents -> Explainable AI
+* Information systems -> Intelligent Systems -> Personal Assistants
+Keywords: Artificial Intelligence, Agentic AI, Explainable AI, Proactive Reasoning, Task Management, Decision Making
+
+
+TABLE OF CONTENTS
+ABSTRACT        2
+TABLE OF CONTENTS        3
+LIST OF ABBREVIATIONS        6
+LIST OF FIGURES        7
+LIST OF TABLES        8
+CHAPTER 01: INTRODUCTION        1
+1.1 Chapter Overview        1
+1.2 Problem Background        1
+1.3 Problem Definition        1
+1.3.1 Problem Statement        2
+1.4 Research Motivation        2
+1.5 Existing Work        2
+Table 1 : Existing work        3
+1.6 Research Gap        4
+1.6.1 Lack Of Proactive, Context-Aware Suggestion Systems For Task Management        4
+1.6.2 Insufficient Explainability Suggestions Made By Intelligent Assistants        4
+1.7 Contribution to Body of Knowledge        4
+1.7.1 Problem Domain Contribution        4
+1.7.2 Research Domain Contribution        4
+1.8 Research Challenges        5
+1.8.1 Context Understanding And Representation        5
+1.8.2 Explainability Of Reasoning        5
+1.8.3 Integrating With External Systems        5
+1.9 Research Questions        5
+1.10 Research Aim        5
+1.11 Research Objectives        6
+Table 2 : Research objectives        7
+1.12 Project Scope        7
+1.12.1 In Scope        7
+1.12.2 Out Scope        7
+1.13 Hardware/Software Requirements        8
+1.13.1 Hardware Requirements        8
+Table 3 : Hardware requirements        8
+1.13.2 Software Requirements        8
+Table 4 : Software Requirements        8
+1.14 Chapter Summary        8
+CHAPTER 02: LITERATURE REVIEW        9
+2.1 Chapter Overview        9
+2.2 Problem Domain        9
+2.2.1 Overview of Intelligent Personal Assistants        9
+2.2.2 Limitations of Current Systems        9
+2.2.3 Importance of Proactivity and Context-Awareness        10
+2.2.4 Application Areas        10
+2.2.5 Key Challenges        10
+2.2.6 Proposed Architecture        10
+2.3 Existing Work        11
+2.3.1 Proactive Context-Aware Assistants        11
+2.3.2 Explainable AI in Assistants        11
+2.3.3 Context-Aware Recommendation & Assistive Systems        12
+2.4 Benchmarking and Evaluation        12
+2.4.1 Evaluation Criteria        12
+Table 5 : Evaluation Criteria        13
+2.5.2 Benchmarking Of Existing Systems        13
+Table 6 : Benchmarking of existing systems        13
+2.4.3 Comparative Analysis        13
+2.5 Chapter Summary        13
+CHAPTER 03: METHODOLOGY        14
+3.1 Chapter Overview        14
+3.2 Research Methodology        14
+3.2.1 Saunders’ Research Onion (in Table Form)        14
+Table 7 : Saunders’ Research Onion (in Table Form)        15
+3.3 Development Methodology        15
+3.3.1 Requirement Elicitation Methodology        15
+3.3.2 Design Methodology        15
+3.3.3 Programming Paradigm        16
+3.3.4 Testing Methodology        16
+3.3.5 Solution Methodology        17
+3.4 Project Management Methodology        18
+3.4.1 Schedule        18
+3.4.1.1 Gantt Chart        18
+3.4.2.2 Deliverables        18
+Table 8 : Deliverables        18
+3.4.3 Resource Requirements        18
+3.4.3.1 Data        18
+3.4.3.2 Skills        18
+3.4.3 Risk and Mitigation        19
+Table 9 : Risk and mitigation        19
+3.4 Chapter Summary        19
+Chapter 04: Software Requirement Specification (SRS)        20
+4.1 Chapter Overview        20
+4.2 Rich Picture Diagram        20
+Figure 1 : Rich picture diagram        21
+4.3 Stakeholder Analysis        21
+4.3.1 Stakeholder Onion Model        21
+Figure 2 : Stakeholder onion model        21
+4.3.2 Stakeholder Viewpoints        22
+Table 10 : Stakeholder viewpoints        22
+4.4 Selection of Requirement Elicitation Methodologies        22
+4.5 Discussion of Findings        23
+4.6 Summary of Findings        23
+4.7 Context Diagram        23
+4.8 Use Case Diagram        24
+4.9 Use Case Descriptions        24
+4.10 Requirements        24
+Time Schedule        26
+References        26
+Appendices        27
+
+
+
+
+
+
+________________
+
+
+LIST OF ABBREVIATIONS
+Abbreviation
+	Definition
+	AI
+	Artificial Intelligence
+	API
+	Application Programming Interface
+	LLM
+	Large Language Model
+	RQ
+	Research Question
+	RO
+	Research Objective
+	LO
+	Learning Outcome
+	IPA
+	Intelligent Personal Assistant
+	________________
+
+
+LIST OF FIGURES
+Figure 1 : Rich picture diagram        21
+Figure 2 : Stakeholder onion model        21
+
+
+________________
+
+
+LIST OF TABLES
+Table 1 : Existing work        3
+Table 2 : Research objectives        7
+Table 3 : Hardware requirements        8
+
+
+
+
+CHAPTER 01: INTRODUCTION
+1.1 Chapter Overview
+This chapter begins with the problem background, outlining the growing reliance of intelligent assistants and their limitations, followed by a problem definition and problem statement highlighting the absence of proactive, context-aware and explainable suggestions. Then it presents the research motivation, reviews existing work and identifies the research gap that this study aims to address. The chapter also highlights the contribution to the body of knowledge, outlines the research challenges, research questions, research aims and objectives that guide the work. Finally it defines the in and out scope and specifies the hardware and software requirements that are necessary for implementation.
+
+1.2 Problem Background
+
+1.2.1 The Paradigm Shift: From Reactive Oracles to Agentic Systems
+The integration of Large Language Models (LLMs) into personal productivity workflows has fundamentally altered the Human-Computer Interaction (HCI) landscape. Systems such as OpenAI's ChatGPT, Google's Gemini, and GitHub Copilot have demonstrated "emergent abilities" in reasoning and code generation (Wei et al., 2022). However, despite their sophisticated generative capabilities, these systems remain architecturally constrained by what Russell and Norvig (2021) define as a "Simple Reflex" or "Reactive" paradigm. In this mode, the agent’s actions are selected primarily on the basis of the current percept (the immediate user prompt), ignoring the broader historical context of the user's workflow. 
+This reliance on explicit user actuation creates a significant friction point. As Cao et al. (2022) observe in their empirical study of personal assistants, users are increasingly reliant on these systems for complex cognitive tasks, yet the burden of context maintenance, the cognitive load of remembering to prompt the AI with the right information, remains entirely on the human user. The AI functions as a passive 'oracle' rather than a true collaborator.  
+The theoretical deficiency of this model is best understood through the lens of Distributed Artificial Intelligence (DAI). In their seminal framework, Wooldridge and Jennings (1995) define the "Weak Notion of Agency" as comprising four essential properties: autonomy, social ability, reactivity, and proactivity. They define proactivity not merely as the ability to act, but as the ability to "take the initiative" in order to satisfy design objectives. Current LLM interfaces, which wait idly for input, fail this criterion of agency. They are reactive tools, not proactive agents.  
+1.2.2 The Context-Proactivity Gap
+The primary obstacle to achieving true proactivity is the lack of situated context awareness. "Context" in this domain is not limited to the immediate conversation window; it encompasses the "diversified user inputs" of schedules, priorities, and historical behaviors (Yang et al., 2025).  
+The relationship between context history and proactive behavior was established in the foundational work of Byun and Cheverst (2002/2004), who argued that for a system to be proactively helpful, it must "harness context" to model user behavior over time. While their research was situated in the era of Ubiquitous Computing (UbiComp) and focused on sensor data (e.g., location, device status), the core challenge they identified remains unresolved: how to utilize historical data to predict future needs without explicit instruction.  
+Modern attempts to solve this, such as "ContextAgent" (Yang et al., 2025), have introduced "Open-World Sensory Perception" to capture physical context. However, a critical gap remains in capturing the Semantic Context of knowledge work—the tasks, deadlines, and project dependencies stored in tools like Notion or Jira. Without access to this structured semantic layer, an AI agent cannot reason about what the user needs to do next; it can only hallucinate or wait for direction.
+1.2.3 The Trust and Explainability Deficit
+The transition from reactive tools to proactive agents introduces a profound challenge regarding user trust. When a user explicitly commands an AI to "draft an email," the locus of control is clear. However, when an agent proactively intervenes—for instance, suggesting a rescheduling of a meeting based on an inferred priority—the system assumes a level of autonomy that requires justification.
+Miller (2019), in his review of explanation in AI, argues that for intelligent systems to be accepted in social environments, they must provide explanations that align with human social reasoning. Current "Explainable AI" (XAI) research, as reviewed by Saarela and Podgorelec (2024), is predominantly focused on model interpretability (e.g., feature importance, attention weights) rather than the interactional justification required for productivity assistants.  
+There is a paucity of research addressing the specific intersection of Proactivity and Explainability in task management. A system that makes autonomous suggestions without explaining the rationale behind them (e.g., "I suggested this task because it blocks your Friday deliverable") risks being perceived as intrusive rather than helpful (Khan & Ali, 2025).  
+Thus, the problem is threefold: current systems are architecturally reactive (failing Wooldridge’s criteria for agency), they lack the integrated semantic context required for intelligent prediction (as originally framed by Byun & Cheverst), and they fail to provide the social explanations necessary to maintain trust during proactive interventions (Miller, 2019).
+
+
+
+1.3 Problem Definition
+This project proposes a development of an agentic AI system, a personal assistant designed to bridge these gaps by integrating proactivity, perception and memory into a single framework. Rather than automating user actions, the system focuses on proactive guidance which observes user context, identifies tasks and provides explainable, context-driven recommendations  that help users plan more effectively while retaining full control over decision making. The proposed system will demonstrate these capabilities within the domain of task management, integrating with external APIs such as Notion to gather contextual data and generate intelligent systems. It contributes to the ongoing evolution of intelligence systems that are not only capable of understanding user intent but also can provide personalised support to enhance the efficiency.
+1.3.1 Problem Statement
+Existing intelligent assistants are reactive and lack the capability to provide proactive, context-aware and explainable suggestions to support effective task management.
+
+1.4 Research Motivation
+With the growing reliance of intelligent assistance for task management, there’s a clear gap in systems which can provide proactive, context-aware and explainable guidance. Current agentic AI systems are largely reactive, meaning they execute the tasks only for the user prompt which limits their ability to enhance decision making and reduce cognitive effort. While users need to manage complex and dynamic schedules, there’s a growing need for assistants that can reason about priorities, anticipate user goals and deliver transparent, context-aware suggestions. Motivated by these challenges, this research explores the development of an agentic AI system which integrates proactivity and reasoning to support task management effectively while preserving user autonomy and trust.
+
+1.5 Existing Work
+Citation
+	Summary
+	Limitation
+	Contribution
+	Lu et al. (2024) Proactive Agent: Shifting LLM Agents from Reactive Responses to Active Assistance
+	Proposed a data-driven framework enabling LLM agents to act proactively without explicit human prompts using the ProactiveBench dataset.
+	Advanced proactive assistant capabilities by shifting from reactive to initiative-taking behaviours.
+	Limited context integration beyond task events; lacks end-user evaluation.
+	Khan & Ali (2025) The Role of Explainable AI in Machine Learning Model Interpretability
+	Reviewed how explainable AI methods enhance interpretability and user trust across machine learning domains.
+	Provided theoretical basis for integrating explainability into intelligent systems.
+	Did not focus on personal assistant systems or proactive reasoning mechanisms.
+	Cao, Hu & Xu (2022) A Mind in Intelligent Personal Assistants: An Empirical Study
+	Examined user perceptions of anthropomorphism in intelligent personal assistants and its effects on self-efficacy and engagement.
+	Offered user-experience insights useful for designing trustworthy AI assistants.
+	Did not address proactive task reasoning or contextual awareness.
+	Byun & Cheverst (2024) Harnessing Context to Support Proactive Behaviours
+	Investigated how user context and historical data can drive proactive adaptation in assistants.
+	Highlighted design importance of context history and user modelling.
+	Prototype lacked scalability and evaluation in real-world productivity environments.
+	Saarela & Podgorelec (2024) Recent Applications of Explainable AI (XAI): A Systematic Literature Review
+	Analysed 512 XAI studies, noting few applications in productivity or proactive assistant systems
+	Identified key research gap in explainable and proactive AI for task management.
+	Broad scope with limited focus on integrated proactive and explainable assistant design.
+	Table 1 : Existing work
+
+Proactive Agent: Shifting LLM Agents from Reactive Responses to Active Assistance — https://arxiv.org/abs/2410.12361 arXiv+1
+ContextAgent: Context‑Aware Proactive LLM Agents with Open‑World Sensory Perceptions — https://arxiv.org/abs/2505.14668
+Explainable artificial intelligence (XAI): from inherent explainability to large language models (Mumuni & Mumuni, 2025) — https://arxiv.org/abs/2501.09967 arXiv
+
+Proactive behavior in voice assistants: A systematic review and conceptual model — https://doi.org/10.1016/j.chbr.2024.100411 ScienceDirect+1
+Designing a Proactive Context‑Aware AI Chatbot for People’s Long‑Term Goals — https://dl.acm.org/doi/10.1145/3613905.3650912 dl.acm.org
+Generating Proactive Suggestions based on the Context — https://doi.org/10.1145/3640794.3665568 dl.acm.org
+ContextAgent: Context‑Aware Proactive LLM Agents with Open‑World Sensory Perceptions — https://arxiv.org/abs/2505.14668 arXiv
+ProPerSim: Developing Proactive and Personalized AI Assistants through User‑Assistant Simulation — https://arxiv.org/abs/2509.21730
+
+
+1.6 Research Gap
+1.6.1 Lack Of Proactive, Context-Aware Suggestion Systems For Task Management
+Caption: Existing assistants are largely reactive and unable to provide proactive, context-aware suggestions tailored to users tasks and schedules.
+Justification: Research shows that many AI assistants still respond only to the explicit user commands rather than anticipate user needs and act proactively. Even though the automated tools like AutoGPT can automate human tasks, it still needs to predefine a set of rules on how to react to a situation and lacks understanding of the patterns and give context-aware suggestions to the user. Thus there’s a gap in agentic AI systems that can monitor user context (task, schedules) and generate actionable suggestions before a prompt.
+1.6.2 Insufficient Explainability Suggestions Made By Intelligent Assistants
+Caption: Intelligent assistants often lack transparent explanation of their suggestions, reducing user trust and limiting adoption for decision support tasks.
+Justification: Research shows that explainable AI systems lack the ability to understand the users that why the recommendations are made. Despite the importance of explanation in proactive systems, many existing assistance focus on automation rather than clear justifications or suggestions. This means there’s a gap in providing transparent, explainable suggestions in agentic AI systems.
+
+1.7 Contribution to Body of Knowledge
+1.7.1 Problem Domain Contribution
+This project introduces a proactive, context-aware personal assistant that addresses the limitations of existing reactive systems such as ChatGPT. By integrating perception, memory and proactive reasoning the proposed system observes user context, identifies potential needs and provides explainable, personalized suggestions to support effective task management. Unlike traditional assistants that act only upon explicit commands,this system acts as a collaborative partner while maintaining full user control. Throughout the problem domain of task management, the project demonstrates how proactive AI behaviour can improve efficiency and decision support without automation.
+1.7.2 Research Domain Contribution
+From a research perspective, this study contributes to the growing field of Agentic and explainable AI by proposing a reasoning framework that combines context-awareness, explainability and proactivity within a controllable interaction model. It advances existing research by bridging the gap between autonomous action and human-centered action where AI systems provide proactive assistance while preserving transparency and user oversight. The findings are expected to enrich ongoing discussions in Human-AI collaborations, explainable decision support systems and agentic AI architectures applicable to real world productivity applications.
+
+1.8 Research Challenges
+1.8.1 Context Understanding And Representation
+Accurately understanding the user needs and representing the user context remains a major challenge. The system must process the diversified user inputs (user activities, schedules, priorities) in a way that supports meaningful reasoning without misinterpretation or data overload. Achieving this requires robust context modeling and dynamic adaptation mechanisms.
+1.8.2 Explainability Of Reasoning
+Translating complex internal reasoning into human understandable explanations is difficult. The challenge lies in ensuring the system can justify why a particular recommendation is made using clear language while maintaining technical accuracy.
+1.8.3 Integrating With External Systems
+Seamlessly integrating with third party API’s (eg - Notion) with the system to execute user tasks also gives practical difficulties. Handling API limitations, latency and inconsistent data structures further complicates the process.
+
+1.9 Research Questions
+RQ1: How can the system effectively perceive and represent user context to enable proactive assistance without direct user input?
+RQ2: What reasoning framework can balance proactivity with user control to ensure that the system remains supportive rather than intrusive?
+RQ3: How can explainable reasoning be incorporated to ensure that the system’s recommendations are transparent, interpretable and trusted by users?
+
+1.10 Research Aim
+The aim of this research is to evaluate a  proactive, context-aware and explainable agentic AI system that can do actionable tasks like task management while improving user decision making, reducing cognitive load and increasing trust in Human-AI collaboration.
+
+
+1.11 Research Objectives
+Objectives
+	Research Objective
+	Description
+	LOs Mapped
+	RQ Mapped
+	Problem Identification
+	RO1: To identify the research gap in proactive and explainable agentic AI systems.
+
+
+	Analyze existing literature on agentic AI systems to identify limitations in current agentic AI systems.
+	LO1
+	RQ1
+	Literature Review 
+	RO2: To conduct a comprehensive literature review on proactive AI, explainable reasoning and human-AI collaboration models.
+	Evaluate prior studies and frameworks to understand existing approaches to context reasoning and explainable proactivity.
+	LO1, LO2
+	RQ1, RQ2
+	Requirement Elicitation
+	RO3: To identify functional and non functional requirements for developing a proactive AI agent.
+	Engage with potential users and analyse workflow patterns to define system requirements that ensure usability and explainability.
+	LO4
+	RQ2, RQ3
+	System Design
+	RO4: To design a modular architecture integration with perception, memory, decision making and explainability.
+	Developed a detailed design model illustrating data flow, reasoning mechanisms and user interaction flow.
+	LO4
+	RQ2, RQ3
+	Implementation
+	RO5: To implement a proactive reasoning framework integrated with Notion API for contextual data handling.
+	Develop the core system using React, Node, Firebase and Firestore to generate explainable, proactive task suggestions.
+	LO5
+	RQ2, RQ3
+	RO6: To develop a context-aware reasoning algorithm that generates explainable recommendations. 
+	Create a decision to provide user friendly suggestions based on context data.
+	LO6
+	RQ3
+	Testing
+	RO7: To evaluate the effectiveness, accuracy and user satisfaction.
+	Conduct usability testing and collect user feedback to measure performance.
+	LO7
+	RQ4
+	Documentation
+	RO8: To document the complete design, development and evaluation process.
+	Prepare project documentation, user manuals and research reports.
+	LO8
+	-
+	Publication
+	RO9: To publish research findings in an academic venue.
+	Disseminate results on proactive and explainable AI through research publications or conferences. 
+	LO9
+	-
+	Table 2 : Research objectives
+
+1.12 Project Scope
+1.12.1 In Scope
+* Development of a proactive AI assistant capable of understanding user context and providing explainable suggestions for task management.
+* Integrate with external productivity API (eg - Notion) to collect data such as tasks and deadlines.
+* Implementation of a reasoning layer that includes perception, memory, decision making and explainable suggestions.
+1.12.2 Out Scope
+* Task automation.
+* Voice recognition handling.
+* Multi Language Support (Prototype focus on English language only).
+* Integration with multi third party services. Only Notion API will be used for the prototype.
+
+
+1.13 Hardware/Software Requirements
+1.13.1 Hardware Requirements
+Component
+	Specification
+	Processor
+	Intel Core i5 or higher
+	Ram
+	8 GB or higher
+	Storage
+	256 GB or higher
+	Network
+	Stable internet connection
+	Display
+	1080p monitor or higher
+	Table 3 : Hardware requirements
+1.13.2 Software Requirements
+Technology/Tool
+	Why it is Needed
+	Next.js
+	To build the chat UI interface and implement the backend.
+	Firebase Auth
+	To handle user authentication.
+	Firestore
+	To manage data relevant to each user.
+	WebSocket
+	To enable real time communication between client and server.
+	Llama 3.1
+	To understand the user commands.
+	Node-cron
+	To schedule periodic checks (eg - Check upcoming tasks).
+	OAuth2
+	To authenticate ProActiveAI with Notion workplace.
+	Notion API
+	To read and write tasks in the Notion workplace.
+	Notion DB
+	To save user’s tasks.
+	Table 4 : Software Requirements
+1.14 Chapter Summary
+This chapter established a foundation for the study by describing the problem context, limitations of current reactive AI assistants and by defining the specific research problem: the lack of proactive, context aware and explainable suggestion systems for task management. The chapter also outlines existing work, expected contributions to both the problem and research domains, research challenges, research questions, aim and measurable objects. Finally it set the in and out scope boundaries and listed the necessary software and hardware requirements to support implementation and evaluation.
+________________
+
+
+CHAPTER 02: LITERATURE REVIEW
+2.1 Chapter Overview
+This chapter presents a comprehensive review of existing literature related to proactive and explainable intelligent assistant systems. It begins with the Problem Domain, exploring the evolution of intelligent assistants, the growing importance of proactivity and explainability, and the challenges faced by current systems in achieving true contextual understanding and reasoning. The Existing Work section examines notable research studies and technologies in the field, analyzing their methodologies, contributions, and limitations to identify the persisting research gap. The Benchmarking and Evaluation section then provides a comparative analysis of current AI assistants such as ChatGPT, Google Assistant, GitHub Copilot and AutoGPT using well-defined performance criteria. Collectively, this review highlights the gap between reactive and proactive systems, establishing the foundation for the development of a context-aware, proactive, and explainable AI assistant proposed in this study.
+
+2.2 Problem Domain
+2.2.1 Overview of Intelligent Personal Assistants
+Intelligent personal assistants (IPAs) such as ChatGPT, Google Assistant, and GitHub Copilot have become popular in digital productivity, helping users manage tasks, schedules, and information retrieval (Cao et al., 2022). These systems primarily rely on natural language interfaces to respond to explicit user instructions, providing convenience and simplified task execution (Dey, 2010). However, their reactive nature limits the potential of AI systems to act as true collaborators capable of anticipating user needs or reasoning about context. Understanding the landscape of intelligent assistants provides a foundation for identifying their limitations and the opportunities for more advanced, agentic designs.
+2.2.2 Limitations of Current Systems
+Despite advancements in AI, most assistants remain reactive and offer limited personalization. They require explicit user input for task execution, which restricts efficiency in complex environments where users handle multiple concurrent tasks (Byun & Cheverst, 2018). Existing systems lack:
+* Proactivity: Ability to anticipate user needs and suggest actions without explicit prompts (Lu et al., 2024).
+* Context-awareness: Capacity to incorporate user context, historical behaviour, and dynamic task environments (Liao et al., 2023).
+* Explainability: Providing transparent and understandable reasoning behind suggestions to maintain trust (Khan & Ali, 2025).
+These limitations reduce effectiveness in scenarios requiring task prioritization, scheduling, and decision support.
+2.2.3 Importance of Proactivity and Context-Awareness
+Integrating proactivity and context-awareness into assistants can significantly enhance productivity. Proactive systems monitor user tasks, anticipate potential conflicts, and generate context-driven recommendations while maintaining user control (Byun & Cheverst, 2018; Lu et al., 2024). Context-aware systems consider environmental, temporal, and behavioral data to provide tailored guidance, which can reduce cognitive load and support decision-making in dynamic environments (Cao et al., 2022). Explainable suggestions further ensure that users understand and trust the AI's recommendations, promoting adoption and effective collaboration.
+2.2.4 Application Areas
+Intelligent personal assistants are increasingly used in productivity and task management, including:
+* Personal task planning: Scheduling meetings, reminders, and deadlines.
+* Collaborative work environments: Assisting with shared task tracking and coordination.
+* Decision support: Providing recommendations for prioritizing tasks or identifying conflicts (Dey, 2010; Liao et al., 2023).
+The need for proactive and context-aware guidance is especially critical in multi-tasking and high-load environments where human error or oversight can reduce efficiency.
+2.2.5 Key Challenges
+Designing proactive, context-aware, and explainable assistants involves several challenges:
+1. Integration of multiple data sources: Collecting and reasoning from calendars, emails, task lists, and external APIs without overwhelming the user.
+2. Balancing proactivity and user control: Avoiding intrusive suggestions while still being genuinely helpful (Byun & Cheverst, 2018).
+3. Scalability and real-time performance: Ensuring timely recommendations without latency in dynamic task environments.
+4. Explainability and trust: Generating suggestions that are interpretable and justifiable to the user, maintaining transparency (Khan & Ali, 2025).
+2.2.6 Proposed Architecture
+The proposed system integrates proactivity, context-awareness, and explainability into a single framework. While the assistant does not automate tasks, it monitors user activity, identifies relevant tasks, and generates explainable recommendations. The architecture leverages external APIs (e.g., Notion) to collect contextual data, maintains a lightweight memory of user tasks, and uses reasoning mechanisms to provide guidance that aligns with user goals. This framework addresses key gaps in current intelligent assistant research and forms the foundation for the development described in later chapters.
+
+2.3 Existing Work
+2.3.1 Proactive Context-Aware Assistants
+* Yang et al. (2025) ‘ContextAgent: Context‑Aware Proactive LLM Agents with Open‑World Sensory Perceptions’. This work introduces an agent that uses extensive sensory perceptions to enable proactive assistance in open-world scenarios, and reports significantly improved accuracy in proactive predictions.
+
+   * Contribution: Moves the field toward true proactive assistants by leveraging multi-modal context and tool-invocation.
+
+   * Limitation: Focuses on large-scale sensory input and autonomous tool use (which goes beyond suggestion-only models) and lacks evaluation in the productivity/task domain your project targets.
+
+      * Jones et al. (2024) ‘Designing a Proactive Context‑Aware AI Chatbot for People’s Long‑Term Goals’. Explores a chatbot that uses time, location, and personal profile to proactively recommend tasks and support long-term goals.
+
+         * Contribution: Provides empirical insights into proactive assistance in goal-oriented contexts.
+
+         * Limitation: Focuses on conversational chatbot domain rather than integrated task/meeting management with explainable reasoning.
+
+2.3.2 Explainable AI in Assistants
+            * Muia & Kamiri (2024) ‘Explainable Artificial Intelligence: A Comprehensive Review of Techniques, Applications, and Emerging Trends’. This review surveys the state of XAI across domains, highlighting the importance of interpretability and transparency in AI systems.
+
+               * Contribution: Establishes the theoretical basis for explainable suggestions, particularly relevant for human-AI collaboration.
+
+               * Limitation: Not specific to personal assistants or proactive suggestion systems; lacks focus on context-aware task management.
+
+                  * Senoner et al. (2024) ‘Explainable AI Improves Task Performance in Human‑AI Collaboration’. Demonstrates experimentally that assistants providing explanations lead to better human decision-making and higher trust.
+
+                     * Contribution: Provides empirical evidence linking explainability to improved user support outcomes.
+
+                     * Limitation: Conducted in manufacturing/medical task settings—not specifically in task/meeting-management assistants or proactive contexts.
+
+2.3.3 Context-Aware Recommendation & Assistive Systems
+                        * Steen et al. (2024) ‘A Systematic Literature Review of Recent Advances on Context‑Aware Recommender Systems’. Reviews how context (user activity, time, location) is used in recommendation systems; identifies lack of standardised context models and challenges in integrating context effectively.
+
+                           * Contribution: Highlights key hurdles in modelling and utilising context—directly relevant to proactive assistant design.
+
+                           * Limitation: Focuses on recommender systems rather than full assistant systems; does not address explanation or suggestion-generation in task workflows.
+
+2.4 Benchmarking and Evaluation
+Benchmarking and evaluation are essential to identify the performance, usability, and contextual reasoning capabilities of existing intelligent assistant systems. This section compares recent AI-based assistants such as ChatGPT, Google Assistant, GitHub Copilot and AutoGPT based on accuracy, context-awareness, proactivity, explainability, and user control. The analysis provides insights into their limitations and highlights the research gap addressed in the proposed system.
+2.4.1 Evaluation Criteria
+The following criteria were used for benchmarking existing solutions:
+Criterion
+	Description
+	Accuracy
+	Measures how correctly the system performs assigned or requested tasks.
+	Context-Awareness
+	Evaluates the ability to understand user intent and adapt to changing contexts.
+	Proactivity
+	Assesses the ability to anticipate user needs and act or suggest without explicit input.
+	Explainability
+	Determines whether the system can justify or clarify its suggestions or actions.
+	User Control
+	Reflects how much decision-making power remains with the user versus automated actions.
+	Integration Capability
+	Measures how well the system interacts with third-party APIs or applications.
+	Table 5 : Evaluation Criteria
+2.5.2 Benchmarking Of Existing Systems
+System
+	ChatGPT
+	Google  Assistant
+	Github Copilot
+	AutoGPT
+	Accuracy
+	High
+	High
+	High
+	Medium
+	Context Awareness
+	Moderate
+	High
+	Low
+	Moderate
+	Proactivity
+	Low
+	Low
+	Low
+	High
+	Explainability
+	Moderate
+	Low
+	Low
+	Low
+	User Control
+	High
+	High
+	Moderate
+	Low
+	Integration Capability
+	Medium
+	High
+	Medium
+	High
+	Table 6 : Benchmarking of existing systems
+2.4.3 Comparative Analysis
+From the benchmarking, it is evident that while systems like ChatGPT and Google Assistant provide strong contextual understanding, they remain reactive and rely heavily on user prompts. AutoGPT introduces autonomy and task execution capabilities, but often lacks explainability and user control, resulting in potential trust and safety issues.
+No existing system effectively balances proactivity, explainability, and user control—a gap that this research aims to address through the design of a Proactive, Explainable, and Context-Aware AI Assistant capable of providing justifiable, context-driven task recommendations without automating user decisions.
+
+2.5 Chapter Summary
+This chapter reviewed key literature on proactive and explainable intelligent assistants, highlighting the limitations of existing systems that primarily function reactively with minimal contextual reasoning. The Problem Domain outlined the growing dependence on AI-driven assistants and the need for systems capable of proactive and transparent interaction. The Existing Work section examined prior research and technologies, revealing that while notable progress has been made in personalization and reasoning, significant gaps remain in achieving balanced proactivity and explainability. The Benchmarking and Evaluation further compared current systems such as ChatGPT, Google Assistant, GitHub Copilot and AutoGPT, demonstrating that none effectively integrate context-awareness, explainability, and user control within a unified framework. These findings reinforce the motivation for developing a proactive and explainable AI assistant capable of providing context-driven recommendations while maintaining user autonomy.
+CHAPTER 03: METHODOLOGY
+3.1 Chapter Overview
+This chapter outlines the methodological framework adopted for developing the Proactive Agentic AI System. It begins by discussing the research methodology, structured around Saunders’ Research Onion, which defines the philosophical stance, research approach, strategy, and data collection methods guiding the study. The chapter then details the development methodology, including requirement elicitation, design, programming, testing, and solution implementation strategies used to construct the prototype. Finally, the project management methodology is presented, explaining how resources, risks, and timelines are planned and managed to ensure systematic development and evaluation of the proposed system.
+
+3.2 Research Methodology
+3.2.1 Saunders’ Research Onion (in Table Form)
+The research design for this project is structured according to the "Research Onion" framework proposed by Saunders et al. (2019). This framework ensures methodological coherence by aligning the overarching philosophical stance with the specific techniques used for data collection and analysis. Given the dual nature of this project—which involves both the technical engineering of an agentic artifact and the evaluation of human perception—a Pragmatist philosophy is adopted.
+
+Layer
+	 Choice
+	Justification
+	Research Philosophy
+	Pragmatism
+	The research question requires both the objective development of a functional system (Software Engineering) and the subjective evaluation of user trust and explainability (HCI). Pragmatism avoids the rigid dichotomy between Positivism and Interpretivism, arguing that the "truth" is what works to solve the research problem. It supports the use of mixed methods to evaluate both the functionality and the experience of the artifact.
+	Research Approach
+	Deductive
+	The project adopts a Deductive approach by starting with established theories of Agency (Wooldridge & Jennings, 1995) and Explainability (Miller, 2019). From these theories, specific design requirements (SRS) and hypotheses are deduced and then tested through the implementation of the ProActiveAI prototype.
+	Research Strategy
+	Design Science Research (DSR)
+	This strategy is specifically designed for Information Systems research that involves the creation of an IT artifact to solve a relevant problem. DSR iterates through problem identification, solution design (ProActiveAI), and evaluation, making it the most appropriate strategy for a software development thesis.
+	Methodological Choice
+	Mixed Methods (Qualitative Dominant)
+	The evaluation utilizes both quantitative metrics (e.g., system response time, task completion rate) and qualitative data (e.g., thematic analysis of user interviews regarding trust). This triangulation ensures a holistic understanding of the system's impact.
+	Time Horizon
+	Cross-sectional
+	Conducted within a specific timeframe (four months) to develop and evaluate the system prototype.
+	Techniques and Procedures
+	Requirement Elicitation, Prototype Development, and User Evaluation
+	The study provides a "snapshot" evaluation of the prototype's performance and user perception at a single point in time (the completion of the development cycle), rather than a longitudinal study of long-term usage.
+	Table 7 : Saunders’ Research Onion (in Table Form)
+Hypothesis: An Agentic AI system equipped with a proactive reasoning layer can autonomously identify user needs and initiate relevant actions in real-time, leading to improved efficiency and user satisfaction compared to traditional reactive assistants.
+
+3.3 Development Methodology
+3.3.1 Requirement Elicitation Methodology
+A combination of qualitative and participatory techniques was used to identify and refine the functional and non-functional requirements of the Agentic AI system:
+                              * Interviews: Conducted with software developers, students, and potential end-users to gather expectations regarding system proactivity, explainability, and usability.
+                              * Surveys: Distributed to collect user perspectives on task automation, preferences for AI interaction styles, and trust factors in autonomous systems.
+                              * Document Analysis: Reviewed related research papers, existing AI assistants, and proactive system frameworks to identify gaps and best practices.
+                              * Observation: Monitored user interaction behaviors in digital task management contexts to understand natural workflow patterns.
+                              * Self-Evaluation: Reflected on design decisions and system behavior to ensure alignment with the research objectives of proactivity and explainability.
+                              * Brainstorming: Conducted iterative sessions to explore potential reasoning mechanisms, user feedback loops, and explainability designs.
+3.3.2 Design Methodology
+The Object-Oriented Analysis and Design Methodology (OOADM) was selected due to its suitability for modular, scalable systems such as the proposed Agentic AI prototype. The design approach followed the object-oriented principles of encapsulation, abstraction, and modularity to ensure a structured and maintainable architecture.
+The design process was primarily conceptual and iterative, consisting of the following stages:
+3.3.2.1 Conceptual Modelling
+System components were conceptually divided into functional modules, including user interaction, reasoning and decision-making, memory management, and API integration. Each module was treated as an independent logical unit responsible for a specific function in the proactive reasoning cycle.
+3.3.2.2 Architectural Design
+A layered architecture was adopted—comprising a frontend layer (Next.js interface), a backend layer (implemented via Next.js API routes), and a database layer (Firebase Firestore and Firebase Authentication). This structure ensures separation of concerns and utilizes a NoSQL document-based structure for storing user context and task metadata.
+
+
+
+
+
+
+
+
+3.3.2.3 Iterative Refinement
+The design evolved through continuous prototyping and feedback. Early versions focused on task management and API integration, while later iterations refined proactive reasoning and explainability features based on system testing and performance observations.
+3.3.2.4 Alignment with Project Objectives
+Each design decision aimed to reinforce the system’s key objectives—proactivity, context-awareness, and explainability ensuring that the final prototype demonstrates intelligent reasoning and transparent decision-making.
+This lightweight OOADM approach allowed for flexibility and iterative improvement, making it ideal for a single-developer research project focused on conceptual innovation rather than large-scale system engineering.
+3.3.3 Programming Paradigm
+The proposed system will adopt a hybrid programming paradigm combining Object-Oriented, Structured, and Functional Programming principles to ensure modularity, maintainability, and scalability.
+3.3.3.1 Object-Oriented Programming (OOP)
+OOP principles will be applied mainly in the backend logic, implemented within the Next.js server-side environment. Key modules such as the reasoning engine, API service layer, and data handlers will be structured as independent classes or objects to promote encapsulation and maintainability.
+3.3.3.2 Structured Programming
+Structured programming techniques will guide the control flow, API route definitions, and database operations to ensure logical clarity, efficient task execution, and maintainable backend workflows.
+3.3.3.3 Functional Programming
+The frontend, will be developed using React, will leverage functional programming concepts such as React Hooks, pure functions, and immutable state management. These approaches will enhance component reusability, data consistency, and predictable UI behavior, especially during real-time proactive task interactions.
+
+By combining these paradigms, the proposed system aims to effectively manage proactive reasoning, user context awareness, and smooth communication between the frontend and backend layers.
+3.3.4 Testing Methodology
+Testing will be carried out in multiple stages to ensure the system’s reliability, performance, and alignment with user expectations.
+3.3.4.1 Module Testing
+Each core module — including the proactive reasoning engine, perception layer, and task management interface — will be tested individually using unit testing. This will verify that each module performs as expected in isolation.
+3.3.4.2 Integration Testing
+After individual modules are validated, integration testing will be conducted to ensure seamless communication between the reasoning layer, backend API, and frontend interface. This phase will also assess data flow between components such as the decision-making logic and Firestore storage.
+3.3.4.3 Prototype Testing
+The complete prototype will be evaluated under real-world conditions to analyze the system’s overall responsiveness, context-awareness, and proactive task recommendation performance. User feedback will be collected to assess usability, transparency, and reliability.
+3.3.4.4 Evaluation Metrics
+Testing will include both functional and non-functional evaluations. Functional testing will measure accuracy, precision, recall, and response time of proactive suggestions, while non-functional testing will focus on system scalability, stability, and user satisfaction.
+3.3.5 Solution Methodology
+The solution methodology will outline the approach taken to design, develop, and refine the proactive agentic AI system. The process focuses on integrating perception, reasoning, and proactivity into a unified framework capable of generating explainable task recommendations.
+3.3.5.1 Context Data Collection
+The system will gather contextual data through integration with external APIs such as Notion or similar productivity platforms. This data will include user tasks, schedules, and deadlines to enable contextual understanding and reasoning.
+3.3.5.2 Knowledge Representation
+A structured internal memory model will be designed to store processed data, enabling the agent to perceive patterns, recall past user behavior, and maintain continuity across sessions.
+3.3.5.3 Reasoning and Decision-Making
+The reasoning engine will apply proactive logic to interpret context, anticipate user needs, and generate suggestions aligned with user goals. Explainability mechanisms will be embedded to justify system decisions in natural language.
+3.3.5.4 System Integration
+The proactive reasoning layer will be integrated with the backend (Node.js) and frontend (React) to form a cohesive system that facilitates real-time communication between perception, memory, and decision modules.
+3.3.5.5 Evaluation and Refinement
+The prototype will undergo iterative testing and refinement cycles based on user feedback, focusing on improving accuracy, proactivity, and interpretability of generated recommendations.
+
+3.4 Project Management Methodology
+3.4.1 Schedule 
+3.4.1.1 Gantt Chart
+  
+Figure 1 : Gantt Chart
+3.4.2.2 Deliverables
+Delivarebles 
+	Dates
+	Project Proposal
+	
+
+	Literature Review
+	
+
+	Software Requirement Specification
+	
+
+	Project Proposal – initial draft
+	10th Oct 2025
+	Project Proposal and Requirement Specification – final draft
+	
+
+	Project Proposal and Requirement Specification – Final
+	13th Nov 2025
+	Proof of Concept 
+	
+
+	Design Document
+	
+
+	Prototype
+	
+
+	Interim Project Demo
+	30th Jan 2026
+	Implementation
+	
+
+	Testing 
+	
+
+	Evaluation
+	
+
+	Thesis Submission
+	1st Apr 2026
+	Minimum Viable Product
+	1st Apr 2026
+	Table 8 : Deliverables
+3.4.3 Resource Requirements
+3.4.3.1 Data
+The system will utilize contextual and task-related data retrieved from integrated APIs such as Notion or similar productivity tools. This data will include user-created tasks, schedules, and notes. No external datasets are required since data will be dynamically collected through authenticated user interactions within the system.
+3.4.3.2 Skills
+The project requires proficiency in full-stack development, including React for frontend design, Node.js for backend development, and Firestore for database management. Additional skills in API integration, context modeling, and AI reasoning design are essential to implement the agentic framework effectively.
+3.4.3 Risk and Mitigation
+Risk
+	Severity 
+	Frequency 
+	Mitigation Strategy
+	Integration failure between reasoning engine and external APIs (e.g., Notion).
+	4
+	3
+	Conduct early integration testing with mock APIs and implement fallback mechanisms for unavailable endpoints.
+	Inaccurate or irrelevant proactive suggestions due to poor context modeling.
+	5
+	3
+	Continuously refine reasoning logic through user testing and incorporate explainability checks for system feedback.
+	Data inconsistency or corruption in memory storage.
+	4
+	2
+	Use validation rules and automated data integrity checks before storing or retrieving context data.
+	User rejection due to lack of trust in AI suggestions.
+	3
+	3
+	Provide explainable outputs with clear justification for each suggestion to enhance transparency and user confidence.
+	Delays in development due to technical complexity.
+	4
+	4
+	Follow agile sprint planning, with clear task breakdowns and weekly reviews to ensure steady progress.
+	Security vulnerabilities in API communication.
+	5
+	2
+	Implement secure authentication, HTTPS communication, and token-based access for all integrated services.
+	Performance degradation during concurrent user requests.
+	3
+	3
+	Optimize backend queries, use caching mechanisms, and perform load testing during final deployment.
+	Table 9 : Risk and mitigation
+3.4 Chapter Summary
+This chapter presented the comprehensive approach used to guide the design and development of the proactive agentic AI system. It defined the research philosophy and methods, emphasizing a structured, iterative approach based on Saunders’ Research Onion. The development methodology outlined the processes for requirement elicitation, system design, implementation, testing, and evaluation, ensuring alignment between research objectives and system functionality. Additionally, project management considerations such as resource allocation, risk assessment, and mitigation strategies were discussed to ensure the project’s successful execution within scope and timeframe.
+________________
+Chapter 04: Software Requirement Specification (SRS)
+4.1 Chapter Overview
+
+
+The Software Requirement Specification (SRS) chapter provides a detailed analysis of the system’s requirements, including how they were elicited, the stakeholders involved, their viewpoints, and the functional and non-functional requirements of the system. It also includes visual representations such as the Rich Picture Diagram, Stakeholder Onion Model, Context Diagram, and Use Case Diagram to help understand the system’s interactions. Requirements are prioritized using the MoSCoW principle to ensure the focus on what is essential for the system's success.
+
+
+4.2 Rich Picture Diagram
+  
+
+Figure 2 : Rich picture diagram
+4.3 Stakeholder Analysis
+4.3.1 Stakeholder Onion Model
+  
+
+________________
+Figure 3 : Stakeholder onion model
+4.3.2 Stakeholder Viewpoints
+Stakeholder
+	Role
+	Description
+	End Users
+	Primary Users
+	Individuals who interact with ProActiveAI for proactive task management, scheduling, and intelligent recommendations.
+	Developers / Project Team
+	System Designers and Implementers
+	Responsible for designing, developing, testing, and maintaining the ProActiveAI system.
+	Supervisors / Academic Advisors
+	Project Evaluators
+	Oversee project progress, ensure alignment with academic goals, and provide feedback on technical and research quality.
+	API Providers 
+	Service Integrators
+	Provide external APIs used by ProActiveAI to create, update, and manage user tasks or events.
+	Test Users / Pilot Participants
+	Feedback Contributors
+	Use prototype versions to provide feedback on usability, proactivity, and explainability features.
+	Academic Institution / Department
+	Research Beneficiary
+	Gains insights into the development of proactive agentic AI systems for academic research purposes.
+	General Public / Society
+	Indirect Beneficiaries
+	Benefit from enhanced productivity and decision-making through future applications of ProActiveAI.
+	Competitors / Malicious Users
+	Negative Influencers
+	Potentially attempt to replicate, misuse, or exploit the system’s features or data.
+	Table 10 : Stakeholder viewpoints
+
+4.4 Selection of Requirement Elicitation Methodologies
+For this project, several requirement elicitation methodologies were employed to ensure the gathered requirements accurately reflect stakeholder expectations and system objectives. Each method was chosen to provide comprehensive insights into user needs, technical feasibility, and functional priorities.
+Interviews: Conducted with potential end-users and AI researchers to understand expectations for a proactive assistant, focusing on autonomy, explainability, and usability.
+Surveys: Distributed among students and professionals to collect feedback on preferred task management behaviors and interaction styles with intelligent assistants.
+Document Analysis: Reviewed documentation and literature from existing intelligent systems such as ChatGPT, Google Assistant, and Notion AI to identify limitations in proactivity and explainability.
+Brainstorming Sessions: Held with project supervisors and developers to refine ideas related to proactive reasoning, task management workflows, and explainable AI mechanisms.
+
+
+4.5 Discussion of Findings
+
+4.5.1 Literature Review Findings
+Finding
+	Citation
+	Existing intelligent assistant systems such as ChatGPT, Google Assistant, and GitHub Copilot primarily operate in a reactive manner, responding only to explicit user inputs. While they demonstrate strong natural language understanding and contextual awareness, they lack proactive reasoning capabilities like anticipating user needs and autonomous task planning.
+	Wei, J., Tay, Y., Bommasani, R., Raffel, C., & Zoph, B. (2022) Emergent abilities of large language models. arXiv preprint arXiv:2206.07682.
+	Studies emphasize the growing need for context-aware and proactive AI agents that collaborate intelligently with users instead of merely executing commands.
+	Zhang, T., Li, Y., & Liu, H. (2023) Proactive agents: Advancing task-oriented AI assistants through contextual reasoning. Journal of Artificial Intelligence Research, 78, pp. 123–140.
+	Explainability remains a key challenge, as users often struggle to understand why AI systems make certain decisions, reducing transparency and user trust.
+	Miller, T. (2019) Explanation in artificial intelligence: Insights from the social sciences. Artificial Intelligence, 267, pp. 1–38.
+	Table 11 : Literature review findings
+4.5.2 Interviews Findings
+Codes
+	Themes
+	Conclusion
+	Real-time data
+	Accuracy vs. speed
+	Anticipated challenge: balancing real-time processing with high detection accuracy.
+	False positives
+	Detection effectiveness
+	Expected that high false positives reduce system reliability and burden manual checks.
+	Domain-specific modeling
+	Contextual accuracy
+	Projected that models tailored to specific domains improve detection quality.
+	Explainability
+	Transparency and trust
+	Important to provide explainable recommendations to build user confidence.
+	Integration with APIs
+	Automation and personalization
+	Integrating with tools like Notion can enhance workflow support but adds complexity.
+	User feedback loop
+	Continuous learning
+	Capturing user preferences in memory is likely to improve system adaptability.
+	Hybrid AI approach
+	Interpretability vs. performance
+	Combining rule-based and ML models may balance performance and interpretability.
+	Table 12 : Interview findings
+4.5.3 Survey Findings
+Question
+	How often do you use task management tools?
+	Results
+	  
+
+	Findings
+	90.9% of the audience use task management tools to manage their day to day tasks, meaning the survey targets the right audience.
+	Question
+	What level of proactive assistance would be most useful to you in your task-management tool?
+	Results
+	  
+
+	Findings
+	The majority of the audience prefers to have a semi automated assistant, which is exactly what ProActiveAI are going to address.
+	Question
+	What proactive actions would be most useful to you to have in your task management tool?
+	Results
+	  
+
+	Findings
+	This will be helpful in determining which features are people mostly interested to have in ProActiveAI.
+	Question
+	What frequency of proactive suggestions would be most useful to you in your task-management tool?
+	Results
+	  
+
+	Findings
+	Most people prefer to suggest proactive suggestions once a day rather than a few times a day or only when necessary.
+	Table 13 : Survey findings
+
+4.5.4 Brainstorming/Observation
+Brainstorming was identified as a non-requirement due to interviews and observations providing sufficient insights for designing the system.
+
+
+4.6 Summary of Findings
+The requirement elicitation process integrated insights from the literature review, interviews, and surveys to ensure a comprehensive understanding of the system’s functional and non-functional needs. The literature review revealed a research gap in proactive and explainable AI systems capable of autonomous task management and real-world integration. While existing intelligent assistants like Siri and Alexa emphasize reactivity, few demonstrate proactive reasoning or explainability in decision-making.
+
+Interviews with developers and potential users highlighted the need for transparency in AI actions, memory persistence, and explainable outputs. Participants emphasized that user trust depends on the system’s ability to justify its proactive behaviour and show visible reasoning traces.
+Survey findings further supported the importance of user control and personalization, with respondents preferring systems that learn from context but still allow manual overrides. Usability and privacy emerged as key expectations, indicating the necessity for strong data protection measures when handling user preferences and third-party integrations like Notion.
+Overall, the findings established the need for a proactive, explainable, and secure AI framework that integrates reasoning, memory, and real-time interaction while maintaining transparency and ethical compliance.
+4.7 Context Diagram
+  
+Figure 4 : Context diagram
+4.8 Use Case Diagram
+  
+Figure 5 : Use case diagram
+
+4.9 Use Case Descriptions
+Field
+	Details
+	Use case
+	Input Task
+	Id
+	UC-01
+	Description
+	The user submits a new task or request for the agent to process.
+	Actor
+	User
+	Support acting
+	System interface (chat interface or dashboard)
+	Stakeholders
+	End user, AI system developer
+	Pre-conditions
+	The system is active and ready to receive input.
+	Extended use-cases
+	None
+	Included use-cases
+	Analyze Task
+	Main flow
+	User provides task → System validates input → Task stored for processing.
+	Alternate flows
+	Invalid input detected → System asks for clarification.
+	Exceptional flows
+	Network failure → Input not processed.
+	Post-conditions
+	Task successfully received and sent to analysis.
+	Table 14 : Use case descriptions-1
+Field
+	Details
+	Use case
+	Analyze Task
+	Id
+	UC-02
+	Description
+	The AI analyzes the received task to understand context, intent, and required actions.
+	Actor
+	System (AI Engine)
+	Support acting
+	NLP/Reasoning module
+	Stakeholders
+	System developer, AI researcher
+	Pre-conditions
+	Valid task data received.
+	Extended use-cases
+	Learn from Feedback
+	Included use-cases
+	Plan Actions
+	Main flow
+	Parse input → Extract intent → Identify entities → Determine required action plan.
+	Alternate flows
+	Ambiguous task → Request clarification from user.
+	Exceptional flows
+	AI model failure or timeout during analysis.
+	Post-conditions
+	Task meaning and intent understood; action plan generated.
+	Table 15 : Use case descriptions-2
+Field
+	Details
+	Use case
+	Plan Actions
+	Id
+	UC-03
+	Description
+	The AI creates an execution plan by deciding the steps and APIs needed to complete the task.
+	Actor
+	System (Planner Module)
+	Support acting
+	Reasoning and decision module
+	Stakeholders
+	AI developer, user
+	Pre-conditions
+	Task analysis completed successfully.
+	Extended use-cases
+	None
+	Included use-cases
+	Execute Actions
+	Main flow
+	Generate plan → Sequence actions → Allocate required resources.
+	Alternate flows
+	Partial plan generation → Notify user for manual input.
+	Exceptional flows
+	Insufficient permissions or invalid API access.
+	Post-conditions
+	Valid plan ready for execution.
+	Table 16 : Use case descriptions-3
+4.10 Requirements
+The MoSCoW principle is applied to prioritize system requirements according to their importance and feasibility:
+                              * M – Must Have: Essential features required for the system’s core functionality.
+
+                              * S – Should Have: Important but not critical features; they add significant value if implemented.
+                              * C – Could Have: Desirable features that can enhance usability or performance but are not essential.
+                              * W – Will Not Have: Features that are outside the current project scope or planned for future iterations.
+
+For the IPD submission, the focus will be on implementing all Must Have (M) requirements to establish the system’s primary functionality.
+For the  final submission, both Must Have (M) and Should Have (S) requirements will be completed, while Could Have (C) requirements will be considered as potential enhancements in later phases.
+4.10.1 Functional Requirements
+ID
+	Requirement Description
+	Priority (MoSCoW)
+	FR-01
+	The system must allow users to input tasks or requests through a conversational interface.
+	M
+	FR-02
+	The system must analyze the input task to understand intent and extract required actions.
+	M
+	FR-03
+	The system must plan and sequence actions required to complete the task.
+	M
+	FR-04
+	The system must execute planned actions using external APIs or integrated services.
+	M
+	FR-05
+	The system should proactively suggest relevant tasks or reminders based on user behavior.
+	S
+	FR-06
+	The system could allow users to edit or cancel scheduled tasks through the interface.
+	C
+	FR-07
+	The system must display task execution results clearly to the user.
+	M
+	FR-08
+	The system should learn from user feedback to improve task planning and decision-making.
+	S
+	FR-09
+	The system could integrate with multiple APIs (e.g., Notion, Google Calendar) for extended functionality.
+	W
+	Table 17 : Functional requirements
+4.10.2 Non-Functional Requirements
+ID
+	Requirement Description
+	Priority (MoSCoW)
+	NFR-01
+	The system must respond to user requests within 10 seconds under normal load.
+	M
+	NFR-02
+	The system must maintain high reliability, ensuring at least 95% uptime.
+	M
+	NFR-03
+	The system should log all user interactions for learning and auditing purposes.
+	S
+	NFR-04
+	The system could provide multilingual support for international users.
+	C
+	NFR-05
+	The system must ensure data privacy and comply with relevant data protection standards.
+	M
+	NFR-06
+	The system should provide clear and explainable reasoning for its autonomous decisions.
+	S
+	NFR-07
+	The system will not include mobile application support in the initial version.
+	W
+	Table 18 : Non-functional requirements
+
+4.11 Chapter Summary
+The Software Requirement Specification chapter has provided a comprehensive overview of the system’s functional and non-functional requirements, the methodologies used to gather these requirements, and the tools and techniques employed to ensure stakeholder needs are addressed. Requirements were prioritized using the MoSCoW principle to focus on what is mandatory for the system’s success.
+
+
+
+
+
+
+
+
+
+
+
+
+Chapter 5: Social, Legal, Ethical and Professional issues (SLEP)
+5.1        Chapter overview
+This chapter evaluates the ProActiveAI project within the framework of Social, Legal, Ethical, and Professional (SLEP) implications. As an intelligent orchestrator handling personal user data via the Notion API, the development process was strictly guided by the BCS Code of Conduct.. In accordance with the Code’s core pillars. Public Interest, Professional Competence and Integrity, Duty to Relevant Authority, and Duty to the Profession. This section details how potential risks were identified and mitigated to ensure a responsible and secure deployment.
+5.2        SLEP issues and mitigation
+
+
+Social
+Issue: The Digital Divide and AI Dependency. There is a risk that users may become overly reliant on automated scheduling, potentially degrading their manual organizational skills.
+Mitigation: The system is designed with a "Human-in-the-Loop" philosophy. ProActiveAI provides suggestions rather than autonomous execution, ensuring the user remains the primary decision-maker.
+	Legal
+Issue: Data Privacy and GDPR Compliance. Integrating with the Notion API involves processing private workspace data. Under the UK GDPR, this requires strict data handling protocols.
+Mitigation: No user data is stored on ProActiveAI’s local databases. The system uses OAuth 2.0 for secure authentication, and data is processed in-memory for inference via the Groq API, ensuring no permanent storage of sensitive "task content" occurs on the application server.
+	Ethical
+Issue: Algorithmic Bias and Hallucination. Large Language Models like Llama 3.1 can "hallucinate" incorrect deadlines or tasks, which could lead to missed professional commitments.
+Mitigation: To address the ethical risk of misinformation, the UI includes a "Validation Layer." Users must explicitly confirm an action before it is written to their Notion database, preventing the AI from making unverified changes.
+	Professional
+Issue: Professional Competence and Code Integrity. Providing a tool that modifies a user's primary workspace requires a high standard of software reliability to prevent data corruption.
+Mitigation: Adhering to the BCS Code of Conduct, rigorous unit testing was performed on the Notion CRUD modules. 
+	
+
+5.3        Chapter summary
+This chapter has demonstrated that ProActiveAI is not merely a technical solution but a professionally responsible one. By mapping project risks to the BCS Code of Conduct, the project ensures that legal requirements like GDPR are met, ethical risks of AI hallucinations are mitigated through validation layers, and professional standards of data integrity are upheld. This proactive approach to SLEP issues ensures the project’s viability in a real-world, regulated environment.
+________________
+Chapter 6 : Design
+6.1 Chapter Overview
+The design phase serves as the blueprint for translating the requirements identified in Chapter 4 into a functional technical solution. This chapter details the architectural decisions, data flow logic, and interface designs that ensure ProActiveAI is scalable, secure, and user-centric. By utilizing a layered architectural approach, the system separates concerns between the user interface, the AI inference engine, and the external Notion workspace.
+6.2 Design Goals
+The following design goals, derived from the Non-Functional Requirements (NFRs), guided the system’s development:
+                                 * Performance: Leveraging Groq’s LPU (Language Processing Unit) to ensure near-instantaneous intent extraction from user prompts.
+                                 * Usability: Designing a minimalist interface inspired by Notion’s aesthetic to reduce cognitive load.
+                                 * Accuracy: Implementing a validation layer to ensure the Llama 3.1 model’s outputs accurately reflect the user's intent before modifying the database.
+                                 * Scalability: Using a modular "Layered Architecture" to allow for future integrations with other APIs (e.g., Google Calendar).
+6.3 System Architecture Diagram
+  
+
+6.4 Detailed Design
+There can be several detailed design diagrams. Include the relevant design diagrams in this section. Prior to each diagram provide a description of the purpose of that diagram.
+
+
+You need to determine the design diagrams based on the decided Analysis and Design Methodology. eg: SSADM/OOADM.
+
+
+General guidelines as follows.
+                                 * OOAD - class diagram, sequence diagrams, Activity diagram etc. 
+                                 * SSADM - data flow diagrams. 
+
+
+6.5  Algorithm Design
+
+
+Your AI/ML approach can be expressed as an algorithm (pseudocode) or by means of a flow chart. 
+Refer Lecture slides for example for an algorithm.
+
+
+Alternatively, if the AI/ML solution is following a Deep Neural Network, you may show the Neural network architecture. In the Lecture slides examples can be found.
+eg:
+Vision Transformer Outperforms Deep Convolutional Neural Network-based Model in Classifying X-ray Images (Uparkar et al., 2023) - Figure 4 
+
+
+If your having a AI/ML model, you may include it in this section.
+
+
+6.6  UI Design
+Note: These can be moved to the appendix. Either you can have the UI Design in the design chapter or the actual UI in the implementation chapter. It is not necessary to have both in the report. Either have the actual UI or the design in the report, the other one can be moved to the appendix.
+
+
+Low fidelity wireframes need to be included here. Since this is the design chapter, it is not expected to include the final implemented UIs. Comment on any design considerations related to improving Usability and Accessibility. 
+6.7  Chapter Summary
+
+
+________________
+Chapter 7: Implementation
+7.1 Chapter Overview
+●      Purpose: Introduce the implementation phase and its role in transforming designs into functional components.
+●       Content:
+o   Outline the objectives of implementation.
+o  Provide a roadmap for the chapter, linking it to the previous (design) chapter.
+7.2 Technology Selection
+
+7.2.1 LLM Selection
+Qwen3-32B was selected as the language model for intent classification and task prioritization due to its extended reasoning capability through chain-of-thought thinking, which is critical for reliably detecting ambiguous user intent (UNCLEAR classification) in destructive operations such as task deletion. Empirical testing demonstrated that smaller models without inherent reasoning (e.g., Llama 3.1 8B) exhibited overconfident task matching, executing delete operations on partially-matching tasks rather than correctly flagging them as ambiguous, a behaviour unacceptable in a task management context. Qwen3-32B's internal reasoning process acts as a confidence calibration mechanism, making it well-suited for an agent that must balance responsiveness with data integrity.
+Purpose: Justify the selection of tools, frameworks, and programming languages used for the development of the prototype and the AI/ML model. 
+
+
+Content : Discuss the specific technologies chosen (e.g., Python, PyTorch, TensorFlow, Flask) in terms of relevance for the software requirements specification, implementation support etc. The Technology stack is a visualization. The rest of the sections should include the implementation software choices you have made.
+
+
+7.2.1         Technology Stack
+7.2.2         Programming Languages
+7.2.3         Development Framework
+7.2.4         Libraries/ Toolkits
+7.2.5         Integrated Development Environment (IDEs)
+7.2.4         Summary of the Technology Selection
+
+
+
+
+7.3 Core Functionalities Implementation
+●   Purpose: Explain how the core features of the system were developed and integrated.
+●   Content:
+                                 * Conduct an Exploratory Analysis (Optional)  on the dataset data to uncover patterns, spot anomalies, and check assumptions before considering the data for further processing / model training.
+                                 * If you are doing a AI/ML project, declare the dataset along with the statistics for the training, development and testing data split sizes
+                                 * Modular Development:
+                                 * Detail the implementation of each module (e.g., data preprocessing, augmentation policies, or prediction engine).
+                                 * Relate modules to the functional requirements defined in SRS.
+                                 * Code Structure: Present the logical organization of code (e.g., use of classes, functions, or design patterns). Where needed include screenshot of code snippets. Any code you show in the chapter needs to be supported with explanation.
+                                 * Integration: Describe how modules interact, ensuring seamless functionality.
+Any code that is used without citations will be treated as plagiarized work and you will be penalized to get zero for the FYP model.
+7.4 User Interface Implementation
+●       Purpose: Highlight the development of the user interface and its integration with backend systems.
+●       Content:
+o   Frontend Development : Detail the UI elements implemented (e.g., input forms, dashboards, result visualizations).
+o   Backend Integration  :  Explain how frontend components communicate with backend processes.
+o   Accessibility Considerations : Include efforts to ensure usability for diverse user groups.
+7.5 Challenges and Solutions
+Purpose: Discuss obstacles encountered during implementation and how they were addressed.
+Content : 
+                                 * Common challenges (e.g., debugging, resource constraints, performance bottlenecks).
+                                 * Specific examples of issues and resolutions: E.g., Optimizing database queries to reduce response time.
+________________
+7.6 Chapter Summary
+●       Purpose: Summarize the key aspects of the implementation phase.
+●       Content:
+o   Recap technologies used, major modules implemented, and challenges overcome.
+o   Transition to the next phase by emphasizing readiness for testing.
+________________
+
+
+Time Schedule
+  
+Figure 4 : Time schedule
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+References
+Follow Harvard referencing style, ensuring at least 20 sources with 80% coming from high-impact journals and conference papers.
+
+
+________________
+
+
+________________
+
+
+Appendices

@@ -1,6 +1,20 @@
 import CommandInput from "@/components/CommandInput";
+import { fetchNotionTasks } from "@/app/actions/notion-actions";
+import { getAgentSuggestion, AgentSuggestion } from "@/app/actions/agent-actions";
 
-export default function Page() {
+export default async function Page() {
+  const initialTasks = await fetchNotionTasks();
+
+  let initialSuggestion: AgentSuggestion | null = null;
+  if (initialTasks.length > 0) {
+    try {
+      initialSuggestion = await getAgentSuggestion(initialTasks);
+    } catch {
+      // LLM occasionally returns empty/invalid JSON — fail gracefully, page loads without suggestion
+      initialSuggestion = null;
+    }
+  }
+
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-200 pt-8 pb-12 px-4">
       <div className="max-w-2xl mx-auto">
@@ -12,7 +26,7 @@ export default function Page() {
           <p className="text-slate-500 font-medium">Your Intelligent Notion Task Agent</p>
         </div>
 
-        <CommandInput />
+        <CommandInput initialTasks={initialTasks} initialSuggestion={initialSuggestion} />
 
       </div>
     </main>
