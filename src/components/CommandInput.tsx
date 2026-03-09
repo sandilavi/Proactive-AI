@@ -5,7 +5,7 @@ import { fetchNotionTasks } from "@/app/actions/notion-actions";
 import { Info, X, List, Zap, Trash2, Calendar, CheckCircle2, AlertTriangle, Check, Bell, BellRing, Clock } from "lucide-react";
 
 // Proactive Notification Timer
-const NOTIFICATION_INTERVAL = 5 * 60 * 1000; // 5 minutes
+const NOTIFICATION_INTERVAL = 15 * 60 * 1000; // 15 minutes
 
 interface ProactiveAlert {
   id: string;

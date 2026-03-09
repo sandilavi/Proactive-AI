@@ -1,6 +1,7 @@
 "use server";
 
 import { notion, getRawNotionTasks } from "@/lib/notion";
+import { revalidatePath } from "next/cache";
 
 interface NotionPage {
   id: string;
@@ -13,7 +14,7 @@ interface NotionPage {
 
 export async function fetchNotionTasks() {
   const rawTasks = (await getRawNotionTasks()) as unknown as NotionPage[];
-  
+
   return rawTasks.map((page) => ({
     id: page.id,
     name: page.properties.Name.title[0]?.plain_text || "Untitled Task",
@@ -40,6 +41,7 @@ export async function createNotionTask(title: string, statusName: string, date?:
         }),
       },
     });
+    revalidatePath("/");
     return { success: true, data: response };
   } catch (error) {
     console.error("Notion Create Error:", error);
@@ -64,6 +66,7 @@ export async function updateNotionTask(taskId: string, statusName?: string, date
         }),
       },
     });
+    revalidatePath("/");
     return { success: true, data: response };
   } catch (error) {
     console.error("Notion Update Error:", error);
@@ -77,6 +80,7 @@ export async function deleteNotionTask(taskId: string) {
       page_id: taskId,
       archived: true,
     });
+    revalidatePath("/");
     return { success: true, data: response };
   } catch (error) {
     console.error("Notion Archive Error:", error);

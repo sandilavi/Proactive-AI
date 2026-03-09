@@ -44,4 +44,6 @@ next-env.d.ts
 .history/
 
 # Thesis Files
+Thesis.pdf
+Thesis.txt
 Thesis_Images/

@@ -2,6 +2,8 @@ import CommandInput from "@/components/CommandInput";
 import { fetchNotionTasks } from "@/app/actions/notion-actions";
 import { getAgentSuggestion, AgentSuggestion } from "@/app/actions/agent-actions";
 
+export const dynamic = 'force-dynamic';
+
 export default async function Page() {
   const initialTasks = await fetchNotionTasks();
 
