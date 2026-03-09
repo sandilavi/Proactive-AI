@@ -39,9 +39,19 @@ export async function getAgentSuggestion(tasks: NotionTask[]): Promise<AgentSugg
 
   const taskContext = activeTasks
     .map(
-      (t: NotionTask) =>
-        `- ${t.name} (Status: ${t.status || "N/A"}, Deadline: ${t.deadline || "No Deadline"
-        })`
+      (t: NotionTask) => {
+        let daysInfo = "";
+        if (t.deadline && t.deadline !== "No Deadline") { // Calculate how many days left to the deadline
+          const dlDate = new Date(t.deadline);
+          const now = new Date();
+          const diffTime = dlDate.getTime() - now.getTime();
+          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+          if (diffDays > 0) daysInfo = `, ${diffDays} days away`;
+          else if (diffDays === 0) daysInfo = `, Due today`;
+          else daysInfo = `, ${Math.abs(diffDays)} days overdue`;
+        }
+        return `- ${t.name} (Status: ${t.status || "N/A"}, Deadline: ${t.deadline || "No Deadline"}${daysInfo})`;
+      }
     )
     .join("\n");
 

@@ -1,8 +1,37 @@
 ﻿"use client";
-import { useState, useTransition, useRef } from "react";
+import { useState, useTransition, useRef, useEffect, useCallback } from "react";
 import { executeUserPrompt, confirmAction, NotionTask, AgentSuggestion, AgentResponse } from "@/app/actions/agent-actions";
-import { Info, X, List, Zap, Trash2, Calendar, CheckCircle2, AlertTriangle, Check } from "lucide-react";
+import { fetchNotionTasks } from "@/app/actions/notion-actions";
+import { Info, X, List, Zap, Trash2, Calendar, CheckCircle2, AlertTriangle, Check, Bell, BellRing, Clock } from "lucide-react";
 
+// Proactive Notification Timer
+const NOTIFICATION_INTERVAL = 5 * 60 * 1000; // 5 minutes
+
+interface ProactiveAlert {
+  id: string;
+  taskId: string;
+  taskName: string;
+  urgency: "OVERDUE" | "TODAY" | "TOMORROW" | "SOON";
+  deadline: string;
+  timestamp: string;
+}
+
+// Function To Classify Deadlines
+function classifyDeadline(deadline: string): ProactiveAlert["urgency"] | null {
+  if (!deadline || deadline === "No Deadline") return null;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+  const soon = new Date(today); soon.setDate(today.getDate() + 2);
+  const deadlineDay = new Date(deadline); deadlineDay.setHours(0, 0, 0, 0);
+  if (isNaN(deadlineDay.getTime())) return null;
+  if (deadlineDay < today)                             return "OVERDUE";
+  if (deadlineDay.getTime() === today.getTime())       return "TODAY";
+  if (deadlineDay.getTime() === tomorrow.getTime())    return "TOMORROW";
+  if (deadlineDay.getTime() <= soon.getTime())         return "SOON";
+  return null;
+}
+
+// Function To Format Deadlines
 function formatDeadline(dateStr: string): string {
   if (!dateStr || dateStr === "No Deadline") return "\u2014";
   if (!dateStr.includes("T")) return dateStr;
@@ -62,6 +91,80 @@ export default function CommandInput({ initialTasks, initialSuggestion }: Comman
   const [confirmLoading, setConfirmLoading] = useState(false);
   const [isPending, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Proactive Notification State
+  const [activeToasts, setActiveToasts] = useState<ProactiveAlert[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [showNotificationPanel, setShowNotificationPanel] = useState(false);
+
+  // Request browser notification permission once on mount
+  useEffect(() => {
+    if (typeof window !== "undefined" && "Notification" in window) {
+      if (Notification.permission === "default") {
+        Notification.requestPermission();
+      }
+    }
+  }, []);
+
+  // Fire OS notification for a single task alert
+  const fireOsNotification = useCallback((alert: ProactiveAlert) => {
+    const urgencyLabel: Record<ProactiveAlert["urgency"], string> = {
+      OVERDUE:  "🚨 OVERDUE",
+      TODAY:    "⚠️ Due TODAY",
+      TOMORROW: "🔔 Due TOMORROW",
+      SOON:     "📅 Due in 2 days",
+    };
+    const body = `"${alert.taskName}" — ${urgencyLabel[alert.urgency]}`;
+    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+      new Notification("ProActiveAI Alert", { body, icon: "/favicon.ico", tag: alert.taskId });
+    }
+  }, []);
+
+  // Background interval: fetch tasks & classify deadlines every notification interval
+  useEffect(() => {
+    const urgencyRank: Record<ProactiveAlert["urgency"], number> = { OVERDUE: 0, TODAY: 1, TOMORROW: 2, SOON: 3 };
+
+    const syncNotifications = async () => { // Function to sync notifications after certain period of time
+      try {
+        const tasks = await fetchNotionTasks();
+        const activeTasks = tasks.filter(t => t.status?.toLowerCase() !== "done"); // activeTasks = All the tasks that haven't completed yet
+
+        // Collect all urgent alerts in this check
+        const urgentAlerts: ProactiveAlert[] = [];
+        const nowString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        
+        for (const task of activeTasks) {
+          const urgency = classifyDeadline(task.deadline ?? "");
+          if (!urgency) continue;
+          urgentAlerts.push({ 
+            id: `${task.id}-${Date.now()}`, 
+            taskId: task.id, 
+            taskName: task.name, 
+            urgency, 
+            deadline: task.deadline ?? "", 
+            timestamp: nowString 
+          });
+        }
+
+        if (urgentAlerts.length === 0) return;
+
+        // Fire OS notification for every urgent task
+        // urgentAlerts.forEach(alert => fireOsNotification(alert));
+
+        // Set all urgent alerts in the in-app toast list
+        setActiveToasts(urgentAlerts.sort((a, b) => urgencyRank[a.urgency] - urgencyRank[b.urgency]));
+
+        // Badge count = number of unique urgent tasks found in this check
+        setUnreadCount(urgentAlerts.length);
+      } catch {
+        // Silently fail — don't disrupt the user's workflow on a background check error
+      }
+    };
+
+    syncNotifications(); // Run immediately on mount
+    const intervalId = setInterval(syncNotifications, NOTIFICATION_INTERVAL);
+    return () => clearInterval(intervalId); // cleanup on unmount
+  }, [fireOsNotification]);
 
   const handleSuggestionClick = (text: string) => {
     setPrompt(text);
@@ -140,30 +243,147 @@ export default function CommandInput({ initialTasks, initialSuggestion }: Comman
 
   return (
     <div className="relative">
-       {/* Help Icon Button */}
-       <div className="flex justify-end mb-4 pr-2 md:pr-4">
-         <button onClick={() => setShowHelp(!showHelp)} 
-          className="p-2 bg-white rounded-full shadow-md hover:bg-blue-50 transition-all border border-slate-200 text-blue-600 cursor-pointer"
-          title="Show Suggestions"
+       {/* Top Button Row: Bell + Help */}
+       <div className="flex justify-end items-center gap-2 mb-4 pr-2 md:pr-4">
+
+         {/* Notification Bell */}
+          <button
+            onClick={() => {
+              if (activeToasts.length === 0) return; // Nothing happens if empty
+              
+              // Clear the red badge count when clicking the bell,
+              // but keep the notifications in the list until manually dismissed.
+              if (!showNotificationPanel) {
+                setUnreadCount(0);
+              }
+              setShowNotificationPanel(!showNotificationPanel);
+            }}
+            className={`relative p-2 rounded-full shadow-md transition-all border border-slate-200 cursor-pointer ${
+              showNotificationPanel && activeToasts.length > 0
+                ? "bg-blue-50 text-blue-600 border-blue-200 ring-2 ring-blue-100" 
+                : "bg-white text-slate-500 hover:bg-amber-50"
+            }`}
+            title={activeToasts.length === 0 ? "No Notifications" : "Notification alerts"}
           >
+            {activeToasts.length > 0 && unreadCount > 0 ? (
+              <BellRing size={20} className={showNotificationPanel ? "text-blue-600" : "text-red-500"} />
+            ) : (
+              <Bell size={20} className={showNotificationPanel && activeToasts.length > 0 ? "text-blue-600" : ""} />
+            )}
+            {unreadCount > 0 && (
+              <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white ring-2 ring-white animate-in zoom-in">
+                {unreadCount}
+              </span>
+            )}
+          </button>
+
+         {/* Help / Prompts */}
+         <button onClick={() => setShowHelp(!showHelp)}
+           className="p-2 bg-white rounded-full shadow-md hover:bg-blue-50 transition-all border border-slate-200 text-blue-600 cursor-pointer"
+           title="Show Suggestions"
+         >
            {showHelp ? <X size={20} /> : <Info size={20} />}
          </button>
        </div>
 
-       {/* Suggestion Popup */}
-       {showHelp && (
-         <div className="absolute top-12 right-2 z-50 w-72 bg-white/90 backdrop-blur-xl border border-blue-100 shadow-2xl rounded-2xl p-4 animate-in zoom-in-95">
-           <h3 className="text-xs font-bold text-slate-400 uppercase mb-3">Try these prompts</h3>
-           <div className="flex flex-col gap-2">
-             {SUGGESTIONS.map((item, i) => (
-               <button key={i} onClick={() => handleSuggestionClick(item.text)} className="text-left text-[13px] p-3 rounded-xl hover:bg-blue-500 hover:text-white transition-all border border-transparent hover:border-blue-400 flex items-center gap-3 font-medium text-slate-600 group cursor-pointer">
-                 <span className="text-blue-500 group-hover:text-white">{item.icon}</span>
-                 {item.text}
+       {/* In-App Proactive Panel (List of Toasts) */}
+       {showNotificationPanel && activeToasts.length > 0 && (() => {
+         const urgencyStyles: Record<ProactiveAlert["urgency"], { border: string; headerBg: string; cardBg: string; iconColor: string; label: string }> = {
+           OVERDUE:  { border: "border-red-300",    headerBg: "bg-red-50 border-red-200",    cardBg: "bg-red-50/40",    iconColor: "text-red-500",    label: "🚨 OVERDUE" },
+           TODAY:    { border: "border-orange-300", headerBg: "bg-orange-50 border-orange-200", cardBg: "bg-orange-50/40", iconColor: "text-orange-500", label: "⚠️ Due TODAY" },
+           TOMORROW: { border: "border-amber-300",  headerBg: "bg-amber-50 border-amber-200",  cardBg: "bg-amber-50/40",  iconColor: "text-amber-500",  label: "📅 Due TOMORROW" },
+           SOON:     { border: "border-blue-300",   headerBg: "bg-blue-50 border-blue-200",   cardBg: "bg-blue-50/40",   iconColor: "text-blue-500",   label: "🔔 Due Soon" },
+         };
+         return (
+           <div className="flex flex-col gap-2 mb-4 animate-in slide-in-from-bottom-2 duration-200">
+             <div className="flex items-center justify-between mb-1 px-1">
+               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Active Alerts ({activeToasts.length})</span>
+               <button 
+                 onClick={() => { setShowNotificationPanel(false); setActiveToasts([]); setUnreadCount(0); }}
+                 className="text-[10px] font-bold text-blue-500 hover:text-blue-700 cursor-pointer"
+               >
+                 Mark all as read
                </button>
-             ))}
+             </div>
+             {activeToasts.map(toast => {
+               const s = urgencyStyles[toast.urgency];
+               return (
+                 <div key={toast.id} className={`rounded-xl border shadow-sm ${s.border}`}>
+                   <div className={`px-4 py-2 flex items-center gap-2 border-b ${s.headerBg}`}>
+                     <BellRing size={12} className={s.iconColor} />
+                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${s.iconColor} bg-white/70`}>{s.label}</span>
+                     <span className="text-[10px] font-bold text-slate-400 ml-auto mr-2">{toast.timestamp}</span>
+                     <button onClick={() => {
+                        const next = activeToasts.filter(t => t.id !== toast.id);
+                        setActiveToasts(next);
+                        if (next.length === 0) {
+                          setShowNotificationPanel(false);
+                          setUnreadCount(0);
+                        }
+                     }} className="text-slate-400 hover:text-slate-600 cursor-pointer"><X size={12} /></button>
+                   </div>
+                   <div className={`px-4 py-2.5 flex items-start gap-3 ${s.cardBg}`}>
+                     <Clock size={14} className={`mt-0.5 flex-shrink-0 ${s.iconColor}`} />
+                     <div>
+                       <p className="text-sm font-semibold text-slate-800">{toast.taskName}</p>
+                       <p className="text-[11px] text-slate-500 mt-0.5">
+                         {toast.deadline && toast.deadline !== "No Deadline"
+                           ? `Deadline: ${formatDeadline(toast.deadline)}`
+                           : "No deadline set"}
+                       </p>
+                     </div>
+                   </div>
+                 </div>
+               );
+             })}
            </div>
-         </div>
+         );
+       })()}
+
+       {/* Backdrop */}
+       {showHelp && (
+         <div
+           className="fixed inset-0 z-40"
+           onClick={() => setShowHelp(false)}
+         />
        )}
+
+       {/* Right-side Suggestion Panel */}
+       <div
+         className={`fixed top-0 right-0 h-full w-72 z-50 bg-white border-l border-blue-100 shadow-2xl flex flex-col transition-transform duration-300 ease-in-out ${
+           showHelp ? "translate-x-0" : "translate-x-full"
+         }`}
+       >
+         {/* Panel Header */}
+         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+           <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Try these prompts</h3>
+           <button
+             onClick={() => setShowHelp(false)}
+             className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+           >
+             <X size={16} />
+           </button>
+         </div>
+
+         {/* Prompt Buttons */}
+         <div className="flex flex-col gap-2 p-4 overflow-y-auto flex-1">
+           {SUGGESTIONS.map((item, i) => (
+             <button
+               key={i}
+               onClick={() => { handleSuggestionClick(item.text); setShowHelp(false); }}
+               className="text-left text-[13px] p-3 rounded-xl hover:bg-blue-500 hover:text-white transition-all border border-slate-100 hover:border-blue-400 flex items-center gap-3 font-medium text-slate-600 group cursor-pointer bg-slate-50/60"
+             >
+               <span className="text-blue-500 group-hover:text-white flex-shrink-0">{item.icon}</span>
+               {item.text}
+             </button>
+           ))}
+         </div>
+
+         {/* Panel Footer */}
+         <div className="px-5 py-3 border-t border-slate-100">
+           <p className="text-[10px] text-slate-400 text-center">Click any prompt to fill the input</p>
+         </div>
+       </div>
 
        {/* Main Chat Card */}
        <div className="bg-white/80 backdrop-blur-md border border-white shadow-xl rounded-2xl overflow-hidden relative z-10">
@@ -187,8 +407,8 @@ export default function CommandInput({ initialTasks, initialSuggestion }: Comman
                 <div className={`px-5 py-4 ${pendingDecision.action === "DELETE" ? "bg-red-50/40" : "bg-amber-50/40"}`}>
                   <p className="text-sm text-slate-700 mb-4">
                     {pendingDecision.action === "DELETE" && <>I&apos;m about to permanently delete <strong>&quot;{pendingTaskName}&quot;</strong>. This cannot be undone.</>}
-                    {pendingDecision.action === "UPDATE" && <>I&apos;m about to update <strong>&quot;{pendingTaskName}&quot;</strong>{pendingDecision.data.status && <> → Status: <strong>{pendingDecision.data.status}</strong></>}{pendingDecision.data.date && <> → Due: <strong>{pendingDecision.data.date}</strong></>}.</>}
-                    {pendingDecision.action === "CREATE" && <>I&apos;m about to create: <strong>&quot;{pendingDecision.data.title}&quot;</strong>{pendingDecision.data.date && <> due <strong>{pendingDecision.data.date}</strong></>}.</>}
+                    {pendingDecision.action === "UPDATE" && <>I&apos;m about to update <strong>&quot;{pendingTaskName}&quot;</strong>{pendingDecision.data.status && <> → Status: <strong>{pendingDecision.data.status}</strong></>}{pendingDecision.data.date && <> → Due: <strong>{formatDeadline(pendingDecision.data.date)}</strong></>}.</>}
+                    {pendingDecision.action === "CREATE" && <>I&apos;m about to create: <strong>&quot;{pendingDecision.data.title}&quot;</strong>{pendingDecision.data.date && <> due <strong>{formatDeadline(pendingDecision.data.date)}</strong></>}.</>}
                   </p>
                   <div className="flex gap-3">
                     <button onClick={handleCancel} className="flex-1 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer font-medium">

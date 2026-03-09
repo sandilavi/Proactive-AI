@@ -20,8 +20,9 @@ export default async function Page() {
       <div className="max-w-2xl mx-auto">
         
         <div className="text-center mb-8">
+          <img src="/icon.png" alt="ProActiveAI" className="h-12 w-12 mx-auto mb-3" />
           <h1 className="text-4xl font-extrabold text-slate-900 tracking-tight mb-2">
-            Proactive<span className="text-blue-600">AI</span>
+            ProActive<span className="text-blue-600">AI</span>
           </h1>
           <p className="text-slate-500 font-medium">Your Intelligent Notion Task Agent</p>
         </div>
