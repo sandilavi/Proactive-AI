@@ -8,19 +8,39 @@ interface NotionPage {
   properties: {
     'Name': { title: Array<{ plain_text: string }>; };
     'Status': { status: { name: string; }; };
-    'Due Date': { date: { start: string; } | null; };
+    'Date': { date: { start: string; } | null; };
   };
 }
 
 export async function fetchNotionTasks() {
   const rawTasks = (await getRawNotionTasks()) as unknown as NotionPage[];
 
-  return rawTasks.map((page) => ({
+  const tasks = rawTasks.map((page) => ({
     id: page.id,
     name: page.properties.Name.title[0]?.plain_text || "Untitled Task",
     status: page.properties.Status?.status?.name || "No Status",
-    deadline: page.properties['Due Date']?.date?.start || "No Deadline",
+    deadline: page.properties['Date']?.date?.start || "No Deadline",
   }));
+
+  // Sort tasks chronologically by deadline.
+  // 1. "Done" tasks go to the very bottom.
+  // 2. Tasks with "No Deadline" go to the bottom of the active tasks.
+  return tasks.sort((a, b) => {
+    const aIsDone = a.status.toLowerCase() === "done";
+    const bIsDone = b.status.toLowerCase() === "done";
+
+    // "Done" tasks always go to the bottom
+    if (aIsDone && !bIsDone) return 1;
+    if (!aIsDone && bIsDone) return -1;
+
+    // No deadline goes to the bottom of the current grouping
+    if (a.deadline === "No Deadline" && b.deadline !== "No Deadline") return 1;
+    if (b.deadline === "No Deadline" && a.deadline !== "No Deadline") return -1;
+    if (a.deadline === "No Deadline" && b.deadline === "No Deadline") return 0;
+
+    // Normal chronological sort
+    return new Date(a.deadline).getTime() - new Date(b.deadline).getTime();
+  });
 }
 
 export async function createNotionTask(title: string, statusName: string, date?: string) {
@@ -35,7 +55,7 @@ export async function createNotionTask(title: string, statusName: string, date?:
           status: { name: statusName },
         },
         ...(date && {
-          'Due Date': {
+          'Date': {
             date: { start: date },
           },
         }),
@@ -60,7 +80,7 @@ export async function updateNotionTask(taskId: string, statusName?: string, date
           },
         }),
         ...(date && {
-          'Due Date': {
+          'Date': {
             date: { start: date },
           },
         }),

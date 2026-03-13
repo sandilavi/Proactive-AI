@@ -5,7 +5,8 @@ import { fetchNotionTasks } from "@/app/actions/notion-actions";
 import { Info, X, List, Zap, Trash2, Calendar, CheckCircle2, AlertTriangle, Check, Bell, BellRing, Clock } from "lucide-react";
 
 // Proactive Notification Timer
-const NOTIFICATION_INTERVAL = 15 * 60 * 1000; // 15 minutes
+const NOTIFICATION_INTERVAL = 2 * 60 * 1000;  // 2 minutes
+const TASK_SYNC_INTERVAL   = 2 * 60 * 1000;  // 2 minutes
 
 interface ProactiveAlert {
   id: string;
@@ -21,7 +22,7 @@ function classifyDeadline(deadline: string): ProactiveAlert["urgency"] | null {
   if (!deadline || deadline === "No Deadline") return null;
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
-  const soon = new Date(today); soon.setDate(today.getDate() + 2);
+  const soon = new Date(today); soon.setDate(today.getDate() + 3);
   const deadlineDay = new Date(deadline); deadlineDay.setHours(0, 0, 0, 0);
   if (isNaN(deadlineDay.getTime())) return null;
   if (deadlineDay < today)                             return "OVERDUE";
@@ -86,16 +87,47 @@ export default function CommandInput({ initialTasks, initialSuggestion }: Comman
   const [message, setMessage] = useState("");
   const [taskList, setTaskList] = useState<NotionTask[] | null>(initialTasks ?? null);
   const [suggestion, setSuggestion] = useState<AgentSuggestion | null>(initialSuggestion ?? null);
+
+  // Prevent suggestion from disappearing on page refresh if the LLM fails/rate-limits
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      try {
+        if (initialSuggestion) {
+          // If server successfully fetched a suggestion, use it and cache it
+          setSuggestion(initialSuggestion);
+          localStorage.setItem("proactive_auto_suggestion", JSON.stringify(initialSuggestion));
+        } else {
+          // Server returned null (likely rate-limited on refresh), fallback to cached version
+          const stored = localStorage.getItem("proactive_auto_suggestion");
+          if (stored) {
+            setSuggestion(JSON.parse(stored));
+          }
+        }
+      } catch {
+        // Silently ignore corrupted localstorage
+      }
+    }
+  }, [initialSuggestion]);
   const [pendingDecision, setPendingDecision] = useState<AgentResponse | null>(null);
   const [pendingTaskName, setPendingTaskName] = useState("");
   const [confirmLoading, setConfirmLoading] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const [thinkContext, setThinkContext] = useState("");
+  const [thinkOpen, setThinkOpen] = useState(false);
+  const [deadlineConflict, setDeadlineConflict] = useState(false);
+  const [conflictingTaskNames, setConflictingTaskNames] = useState<string[]>([]);
+  const [duplicateTask, setDuplicateTask] = useState(false);
+  const [duplicateTaskName, setDuplicateTaskName] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Proactive Notification State
   const [activeToasts, setActiveToasts] = useState<ProactiveAlert[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [showNotificationPanel, setShowNotificationPanel] = useState(false);
+
+  // Safely track activeToasts in a ref to avoid React StrictMode double-fire bugs
+  const activeToastsRef = useRef<ProactiveAlert[]>([]);
+  useEffect(() => { activeToastsRef.current = activeToasts; }, [activeToasts]);
 
   // Request browser notification permission once on mount
   useEffect(() => {
@@ -112,7 +144,7 @@ export default function CommandInput({ initialTasks, initialSuggestion }: Comman
       OVERDUE:  "🚨 OVERDUE",
       TODAY:    "⚠️ Due TODAY",
       TOMORROW: "🔔 Due TOMORROW",
-      SOON:     "📅 Due in 2 days",
+      SOON:     "📅 Due Soon",
     };
     const body = `"${alert.taskName}" — ${urgencyLabel[alert.urgency]}`;
     if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
@@ -136,6 +168,11 @@ export default function CommandInput({ initialTasks, initialSuggestion }: Comman
         for (const task of activeTasks) {
           const urgency = classifyDeadline(task.deadline ?? "");
           if (!urgency) continue;
+
+          // If user already dismissed this specific urgency state for this task, don't ping them again
+          const mutedKey = `proactive_muted_${task.id}_${urgency}`;
+          if (typeof window !== "undefined" && localStorage.getItem(mutedKey)) continue;
+
           urgentAlerts.push({ 
             id: `${task.id}-${Date.now()}`, 
             taskId: task.id, 
@@ -151,11 +188,23 @@ export default function CommandInput({ initialTasks, initialSuggestion }: Comman
         // Fire OS notification for every urgent task
         // urgentAlerts.forEach(alert => fireOsNotification(alert));
 
-        // Set all urgent alerts in the in-app toast list
-        setActiveToasts(urgentAlerts.sort((a, b) => urgencyRank[a.urgency] - urgencyRank[b.urgency]));
+        // Safely check how many items are TRULY new against what's currently in the list
+        const prevToasts = activeToastsRef.current;
+        const newlyFoundCount = urgentAlerts.filter(
+          ua => !prevToasts.some(t => t.taskId === ua.taskId && t.urgency === ua.urgency)
+        ).length;
 
-        // Badge count = number of unique urgent tasks found in this check
-        setUnreadCount(urgentAlerts.length);
+        if (newlyFoundCount > 0) {
+          setUnreadCount(prev => prev + newlyFoundCount);
+        }
+
+        // Merge keeping timestamps of existing items
+        const mergedToasts = urgentAlerts.map(newAlert => {
+          const existing = prevToasts.find(t => t.taskId === newAlert.taskId && t.urgency === newAlert.urgency);
+          return existing ? existing : newAlert;
+        });
+
+        setActiveToasts(mergedToasts.sort((a, b) => urgencyRank[a.urgency] - urgencyRank[b.urgency]));
       } catch {
         // Silently fail — don't disrupt the user's workflow on a background check error
       }
@@ -165,6 +214,28 @@ export default function CommandInput({ initialTasks, initialSuggestion }: Comman
     const intervalId = setInterval(syncNotifications, NOTIFICATION_INTERVAL);
     return () => clearInterval(intervalId); // cleanup on unmount
   }, [fireOsNotification]);
+
+  // Background task sync — silently re-fetch Notion tasks every 60 seconds
+  // Only updates the task table when it is currently visible (taskList !== null)
+  // Skips update during confirmation flow to avoid disrupting the user
+  useEffect(() => {
+    const syncTasks = async () => {
+      try {
+        const fresh = await fetchNotionTasks();
+        setTaskList(prev => {
+          if (prev === null) return prev;          // table hidden — don't show it
+          if (pendingDecision) return prev;        // mid-confirmation — don't disrupt
+          return fresh;                            // silently swap in fresh data
+        });
+      } catch {
+        // Silently fail — don't disrupt user on a background sync error
+      }
+    };
+
+    const id = setInterval(syncTasks, TASK_SYNC_INTERVAL);
+    return () => clearInterval(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingDecision]);
 
   const handleSuggestionClick = (text: string) => {
     setPrompt(text);
@@ -179,6 +250,8 @@ export default function CommandInput({ initialTasks, initialSuggestion }: Comman
     setTaskList(null);
     setMessage("");
     setSuggestion(null);
+    setThinkContext("");
+    setThinkOpen(false);
 
     // Timezone logic
     const now = new Date();
@@ -191,10 +264,16 @@ export default function CommandInput({ initialTasks, initialSuggestion }: Comman
     startTransition(async () => {
       try {
         const data = await executeUserPrompt(prompt, userOffset);
+        setThinkContext(data.thinkContext || "");
+        setThinkOpen(false);
         if (data.requiresConfirmation) {
           setPendingDecision(data.pendingDecision);
           setPendingTaskName(data.pendingTaskName);
           setTaskList(data.tasks ?? null);
+          setDeadlineConflict(data.deadlineConflict ?? false);
+          setConflictingTaskNames(data.conflictingTaskNames ?? []);
+          setDuplicateTask(data.duplicateTask ?? false);
+          setDuplicateTaskName(data.duplicateTaskName ?? "");
           setStatus("idle");
           setPrompt("");
         } else if (data.success) {
@@ -228,6 +307,10 @@ export default function CommandInput({ initialTasks, initialSuggestion }: Comman
     } finally {
       setPendingDecision(null);
       setPendingTaskName("");
+      setDeadlineConflict(false);
+      setConflictingTaskNames([]);
+      setDuplicateTask(false);
+      setDuplicateTaskName("");
       setConfirmLoading(false);
     }
   };
@@ -235,6 +318,10 @@ export default function CommandInput({ initialTasks, initialSuggestion }: Comman
   const handleCancel = () => {
     setPendingDecision(null);
     setPendingTaskName("");
+    setDeadlineConflict(false);
+    setConflictingTaskNames([]);
+    setDuplicateTask(false);
+    setDuplicateTaskName("");
     setStatus("idle");
     setMessage("Action cancelled.");
   };
@@ -261,7 +348,7 @@ export default function CommandInput({ initialTasks, initialSuggestion }: Comman
             className={`relative p-2 rounded-full shadow-md transition-all border border-slate-200 cursor-pointer ${
               showNotificationPanel && activeToasts.length > 0
                 ? "bg-blue-50 text-blue-600 border-blue-200 ring-2 ring-blue-100" 
-                : "bg-white text-slate-500 hover:bg-amber-50"
+                : "bg-white text-slate-500 hover:bg-blue-50"
             }`}
             title={activeToasts.length === 0 ? "No Notifications" : "Notification alerts"}
           >
@@ -291,15 +378,19 @@ export default function CommandInput({ initialTasks, initialSuggestion }: Comman
          const urgencyStyles: Record<ProactiveAlert["urgency"], { border: string; headerBg: string; cardBg: string; iconColor: string; label: string }> = {
            OVERDUE:  { border: "border-red-300",    headerBg: "bg-red-50 border-red-200",    cardBg: "bg-red-50/40",    iconColor: "text-red-500",    label: "🚨 OVERDUE" },
            TODAY:    { border: "border-orange-300", headerBg: "bg-orange-50 border-orange-200", cardBg: "bg-orange-50/40", iconColor: "text-orange-500", label: "⚠️ Due TODAY" },
-           TOMORROW: { border: "border-amber-300",  headerBg: "bg-amber-50 border-amber-200",  cardBg: "bg-amber-50/40",  iconColor: "text-amber-500",  label: "📅 Due TOMORROW" },
-           SOON:     { border: "border-blue-300",   headerBg: "bg-blue-50 border-blue-200",   cardBg: "bg-blue-50/40",   iconColor: "text-blue-500",   label: "🔔 Due Soon" },
+           TOMORROW: { border: "border-blue-300",   headerBg: "bg-blue-50 border-blue-200",   cardBg: "bg-blue-50/40",   iconColor: "text-blue-500",   label: "🔔 Due TOMORROW" },
+           SOON:     { border: "border-gray-300",   headerBg: "bg-gray-100 border-gray-300",   cardBg: "bg-gray-50/60",   iconColor: "text-gray-500",   label: "📅 Due Soon" },
          };
          return (
            <div className="flex flex-col gap-2 mb-4 animate-in slide-in-from-bottom-2 duration-200">
              <div className="flex items-center justify-between mb-1 px-1">
                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Active Alerts ({activeToasts.length})</span>
                <button 
-                 onClick={() => { setShowNotificationPanel(false); setActiveToasts([]); setUnreadCount(0); }}
+                 onClick={() => { 
+                   activeToasts.forEach(t => localStorage.setItem(`proactive_muted_${t.taskId}_${t.urgency}`, "true"));
+                   setShowNotificationPanel(false); 
+                   setActiveToasts([]);
+                 }}
                  className="text-[10px] font-bold text-blue-500 hover:text-blue-700 cursor-pointer"
                >
                  Mark all as read
@@ -308,17 +399,17 @@ export default function CommandInput({ initialTasks, initialSuggestion }: Comman
              {activeToasts.map(toast => {
                const s = urgencyStyles[toast.urgency];
                return (
-                 <div key={toast.id} className={`rounded-xl border shadow-sm ${s.border}`}>
+                 <div key={toast.id} className={`rounded-xl border shadow-sm overflow-hidden ${s.border}`}>
                    <div className={`px-4 py-2 flex items-center gap-2 border-b ${s.headerBg}`}>
                      <BellRing size={12} className={s.iconColor} />
-                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${s.iconColor} bg-white/70`}>{s.label}</span>
+                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${s.iconColor}`}>{s.label}</span>
                      <span className="text-[10px] font-bold text-slate-400 ml-auto mr-2">{toast.timestamp}</span>
                      <button onClick={() => {
+                        localStorage.setItem(`proactive_muted_${toast.taskId}_${toast.urgency}`, "true");
                         const next = activeToasts.filter(t => t.id !== toast.id);
                         setActiveToasts(next);
                         if (next.length === 0) {
                           setShowNotificationPanel(false);
-                          setUnreadCount(0);
                         }
                      }} className="text-slate-400 hover:text-slate-600 cursor-pointer"><X size={12} /></button>
                    </div>
@@ -397,30 +488,92 @@ export default function CommandInput({ initialTasks, initialSuggestion }: Comman
              </div>
            </form>
 
-            {/* Confirmation Card */}
-            {pendingDecision && (
-              <div className={`mt-5 rounded-xl border overflow-hidden ${pendingDecision.action === "DELETE" ? "border-red-200" : "border-amber-200"}`}>
-                <div className={`px-5 py-2.5 flex items-center gap-2 border-b ${pendingDecision.action === "DELETE" ? "bg-red-50 border-red-100" : "bg-amber-50 border-amber-100"}`}>
-                  <AlertTriangle size={13} className={pendingDecision.action === "DELETE" ? "text-red-500" : "text-amber-500"} />
-                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Confirm Action</span>
-                </div>
-                <div className={`px-5 py-4 ${pendingDecision.action === "DELETE" ? "bg-red-50/40" : "bg-amber-50/40"}`}>
-                  <p className="text-sm text-slate-700 mb-4">
-                    {pendingDecision.action === "DELETE" && <>I&apos;m about to permanently delete <strong>&quot;{pendingTaskName}&quot;</strong>. This cannot be undone.</>}
-                    {pendingDecision.action === "UPDATE" && <>I&apos;m about to update <strong>&quot;{pendingTaskName}&quot;</strong>{pendingDecision.data.status && <> → Status: <strong>{pendingDecision.data.status}</strong></>}{pendingDecision.data.date && <> → Due: <strong>{formatDeadline(pendingDecision.data.date)}</strong></>}.</>}
-                    {pendingDecision.action === "CREATE" && <>I&apos;m about to create: <strong>&quot;{pendingDecision.data.title}&quot;</strong>{pendingDecision.data.date && <> due <strong>{formatDeadline(pendingDecision.data.date)}</strong></>}.</>}
-                  </p>
-                  <div className="flex gap-3">
-                    <button onClick={handleCancel} className="flex-1 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer font-medium">
-                      Cancel
-                    </button>
-                    <button onClick={handleConfirm} disabled={confirmLoading} className={`flex-1 py-2 rounded-xl text-sm font-semibold text-white transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2 ${pendingDecision.action === "DELETE" ? "bg-red-500 hover:bg-red-600" : "bg-blue-500 hover:bg-blue-600"}`}>
-                      {confirmLoading ? <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" /> : <><Check size={14} />{pendingDecision.action === "DELETE" ? "Yes, Delete" : "Confirm"}</>}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
+             {/* Thinking + Response — unified card */}
+             {(thinkContext || message || pendingDecision) && (
+               <div className={`mt-5 rounded-xl border px-5 py-4 ${
+                 pendingDecision?.action === "DELETE"
+                   ? "border-red-200 bg-red-50/40"
+                   : "border-blue-100 bg-blue-50/50"
+               }`}>
+
+                 {/* Show thinking toggle — first */}
+                 {thinkContext && (
+                   <div className={(message || pendingDecision) ? "mb-4" : ""}>
+                     <button
+                       onClick={() => setThinkOpen((o) => !o)}
+                       className="flex items-center gap-1.5 text-[13px] text-slate-400 hover:text-slate-600 transition-colors cursor-pointer select-none"
+                     >
+                       <span>{thinkOpen ? "Hide Thinking" : "Show Thinking"}</span>
+                       <svg
+                         viewBox="0 0 24 24"
+                         fill="none"
+                         stroke="currentColor"
+                         strokeWidth="2.5"
+                         className={`w-3 h-3 transition-transform duration-300 ${thinkOpen ? "rotate-180" : "rotate-0"}`}
+                       >
+                         <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round"/>
+                       </svg>
+                     </button>
+                     {/* Scrollable full think log — no cutoff */}
+                     {thinkOpen && (
+                       <div className="mt-2 max-h-60 overflow-y-auto pl-3 border-l-2 border-slate-200">
+                         <p className="text-[12px] text-slate-400 italic leading-relaxed whitespace-pre-wrap font-mono">
+                           {thinkContext}
+                         </p>
+                       </div>
+                     )}
+                   </div>
+                 )}
+
+                 {/* Confirmation content — replaces message area during confirmation */}
+                 {pendingDecision ? (
+                   <div>
+                     <p className="text-sm text-slate-700 mb-4">
+                       {pendingDecision.action === "DELETE" && <>I&apos;m about to permanently delete <strong>&quot;{pendingTaskName}&quot;</strong>. This cannot be undone.</>}
+                       {pendingDecision.action === "UPDATE" && <>I&apos;m about to update <strong>&quot;{pendingTaskName}&quot;</strong>{pendingDecision.data.status && <> \u2192 Status: <strong>{pendingDecision.data.status}</strong></>}{pendingDecision.data.date && <> \u2192 Due: <strong>{formatDeadline(pendingDecision.data.date)}</strong></>}.</>}
+                       {pendingDecision.action === "CREATE" && <>I&apos;m about to create: <strong>&quot;{pendingDecision.data.title}&quot;</strong>{pendingDecision.data.date && <> due <strong>{formatDeadline(pendingDecision.data.date)}</strong></>}.</>}
+                     </p>
+                     {/* Deadline conflict warning */}
+                     {deadlineConflict && conflictingTaskNames.length > 0 && (
+                       <div className="mb-4 flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5">
+                         <AlertTriangle size={14} className="text-amber-500 mt-0.5 shrink-0" />
+                         <p className="text-[12px] text-amber-700 leading-relaxed">
+                           <strong>Deadline conflict: </strong>
+                           {conflictingTaskNames.map((n, i) => (
+                             <span key={i}><strong>&quot;{n}&quot;</strong>{i < conflictingTaskNames.length - 1 ? ", " : ""}</span>
+                           ))}
+                           {conflictingTaskNames.length === 1 ? " already has" : " already have"} this deadline. You&apos;ll have multiple tasks due on the same day.
+                         </p>
+                       </div>
+                     )}
+                      {/* Duplicate task warning */}
+                      {duplicateTask && duplicateTaskName && (
+                        <div className="mb-4 flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5">
+                          <AlertTriangle size={14} className="text-amber-500 mt-0.5 shrink-0" />
+                          <p className="text-[12px] text-amber-700 leading-relaxed">
+                            <strong>Duplicate task: </strong>A task named <strong>&quot;{duplicateTaskName}&quot;</strong> already exists in your list. You&apos;ll have multiple tasks with the same name.
+                          </p>
+                        </div>
+                      )}
+                     <div className="flex gap-3">
+                       <button onClick={handleCancel} className="flex-1 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer font-medium">
+                         Cancel
+                       </button>
+                       <button onClick={handleConfirm} disabled={confirmLoading} className={`flex-1 py-2 rounded-xl text-sm font-semibold text-white transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2 ${pendingDecision.action === "DELETE" ? "bg-red-500 hover:bg-red-600" : "bg-blue-500 hover:bg-blue-600"}`}>
+                         {confirmLoading ? <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" /> : <><Check size={14} />{pendingDecision.action === "DELETE" ? "Yes, Delete" : "Confirm"}</>}
+                       </button>
+                     </div>
+                   </div>
+                 ) : (
+                   /* Regular response message */
+                   message ? (
+                     <div className="whitespace-pre-wrap text-sm text-slate-700">
+                       {message}
+                     </div>
+                   ) : null
+                 )}
+               </div>
+             )}
 
             {/* Proactive Suggestion Card */}
             {suggestion && (() => {
@@ -445,11 +598,6 @@ export default function CommandInput({ initialTasks, initialSuggestion }: Comman
                 </div>
               );
             })()}
-             {message && (
-               <div className={`mt-6 p-5 rounded-xl border ${status === "success" ? "bg-blue-50/50 border-blue-100" : "bg-red-50/50 border-red-100"}`}>
-                 <div className="whitespace-pre-wrap text-sm text-slate-700">{message}</div>
-               </div>
-             )}
              {taskList && (
                <div className="mt-4 rounded-xl border border-blue-100 overflow-hidden">
                  <div className="px-5 py-3 bg-blue-50/70 border-b border-blue-100">
@@ -461,7 +609,7 @@ export default function CommandInput({ initialTasks, initialSuggestion }: Comman
                        <tr className="border-b border-slate-100 bg-slate-50/50">
                          <th className="text-left px-5 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide w-1/2">Task</th>
                          <th className="text-left px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Status</th>
-                         <th className="text-left px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Due Date</th>
+                         <th className="text-left px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Date</th>
                        </tr>
                      </thead>
                      <tbody>
