@@ -1,6 +1,6 @@
-﻿"use client";
+"use client";
 import { useState, useTransition, useRef, useEffect, useCallback } from "react";
-import { executeUserPrompt, confirmAction, NotionTask, AgentSuggestion, AgentResponse } from "@/app/actions/agent-actions";
+import { executeUserPrompt, confirmAction, getAgentSuggestion, NotionTask, AgentSuggestion, AgentResponse } from "@/app/actions/agent-actions";
 import { fetchNotionTasks } from "@/app/actions/notion-actions";
 import { Info, X, List, Zap, Trash2, Calendar, CheckCircle2, AlertTriangle, Check, Bell, BellRing, Clock } from "lucide-react";
 
@@ -20,12 +20,20 @@ interface ProactiveAlert {
 // Function To Classify Deadlines
 function classifyDeadline(deadline: string): ProactiveAlert["urgency"] | null {
   if (!deadline || deadline === "No Deadline") return null;
+  
+  const now = new Date();
+  const deadlineDate = new Date(deadline);
+  
+  // 1. Strict Overdue Check (including time if present)
+  if (deadlineDate < now) return "OVERDUE";
+
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
   const soon = new Date(today); soon.setDate(today.getDate() + 3);
+  
   const deadlineDay = new Date(deadline); deadlineDay.setHours(0, 0, 0, 0);
+  
   if (isNaN(deadlineDay.getTime())) return null;
-  if (deadlineDay < today)                             return "OVERDUE";
   if (deadlineDay.getTime() === today.getTime())       return "TODAY";
   if (deadlineDay.getTime() === tomorrow.getTime())    return "TOMORROW";
   if (deadlineDay.getTime() <= soon.getTime())         return "SOON";
@@ -59,12 +67,14 @@ function statusBadge(status: string) {
   return `${base} bg-slate-100 text-slate-500`;
 }
 
-function priorityConfig(priority: string) {
-  const p = priority?.toUpperCase();
+function priorityConfig(priority: any) {
+  // Guard against non-string values from LLM
+  const p = typeof priority === "string" ? priority.toUpperCase() : "";
+  
   if (p === "CRITICAL") return { border: "border-red-200", headerBg: "bg-red-50 border-red-100", cardBg: "bg-red-50/40", badge: "bg-red-100 text-red-700", accent: "bg-red-500", iconColor: "text-red-500" };
   if (p === "HIGH")     return { border: "border-orange-200", headerBg: "bg-orange-50 border-orange-100", cardBg: "bg-orange-50/40", badge: "bg-orange-100 text-orange-700", accent: "bg-orange-500", iconColor: "text-orange-500" };
-  if (p === "MEDIUM")   return { border: "border-amber-200", headerBg: "bg-amber-50 border-amber-100", cardBg: "bg-amber-50/40", badge: "bg-amber-100 text-amber-700", accent: "bg-amber-400", iconColor: "text-amber-500" };
-  return                       { border: "border-slate-200", headerBg: "bg-slate-50 border-slate-100", cardBg: "bg-slate-50/40", badge: "bg-slate-100 text-slate-600", accent: "bg-slate-400", iconColor: "text-slate-400" };
+  if (p === "MEDIUM")   return { border: "border-blue-200", headerBg: "bg-blue-50 border-blue-100", cardBg: "bg-blue-50/40", badge: "bg-blue-100 text-blue-700", accent: "bg-blue-400", iconColor: "text-blue-500" };
+  return                       { border: "border-gray-200", headerBg: "bg-gray-50 border-gray-100", cardBg: "bg-gray-50/40", badge: "bg-gray-100 text-gray-600", accent: "bg-gray-400", iconColor: "text-gray-400" };
 }
 
 const SUGGESTIONS = [
@@ -77,37 +87,64 @@ const SUGGESTIONS = [
 
 interface CommandInputProps {
   initialTasks?: NotionTask[];
-  initialSuggestion?: AgentSuggestion | null;
 }
 
-export default function CommandInput({ initialTasks, initialSuggestion }: CommandInputProps) {
+export default function CommandInput({ initialTasks }: CommandInputProps) {
   const [prompt, setPrompt] = useState("");
   const [showHelp, setShowHelp] = useState(false);
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [message, setMessage] = useState("");
   const [taskList, setTaskList] = useState<NotionTask[] | null>(initialTasks ?? null);
-  const [suggestion, setSuggestion] = useState<AgentSuggestion | null>(initialSuggestion ?? null);
-
-  // Prevent suggestion from disappearing on page refresh if the LLM fails/rate-limits
+  const [suggestion, setSuggestion] = useState<AgentSuggestion | null>(null);
+  // Proactive Suggestion Logic (Client-side to capture local timezone)
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      try {
-        if (initialSuggestion) {
-          // If server successfully fetched a suggestion, use it and cache it
-          setSuggestion(initialSuggestion);
-          localStorage.setItem("proactive_auto_suggestion", JSON.stringify(initialSuggestion));
-        } else {
-          // Server returned null (likely rate-limited on refresh), fallback to cached version
-          const stored = localStorage.getItem("proactive_auto_suggestion");
-          if (stored) {
-            setSuggestion(JSON.parse(stored));
-          }
+    const fetchLocalSuggestion = async () => {
+      const currentTasks = taskList || initialTasks;
+      if (!currentTasks || currentTasks.length === 0) return;
+
+      // Handle Caching: Don't re-fetch if we have a fresh one AND tasks haven't changed
+      const cached = localStorage.getItem("proactive_auto_suggestion");
+      const lastFetch = localStorage.getItem("proactive_last_fetch");
+      const lastFingerprint = localStorage.getItem("proactive_task_fingerprint");
+      const cacheTime = 60 * 60 * 1000; // 60 minutes
+
+      // Create a fingerprint of current tasks (ID + Status + Name + Deadline)
+      const currentFingerprint = currentTasks.map(t => `${t.id}-${t.name}-${t.status}-${t.deadline}`).join("|");
+
+      const isCacheValid = cached && lastFetch && (Date.now() - parseInt(lastFetch) < cacheTime);
+      const isTaskListSame = lastFingerprint === currentFingerprint;
+
+      if (isCacheValid && isTaskListSame) {
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed.suggestion && typeof parsed.confidence === "number" && parsed.priority) {
+          setSuggestion(parsed);
+          return;
         }
-      } catch {
-        // Silently ignore corrupted localstorage
       }
-    }
-  }, [initialSuggestion]);
+
+      // Fetch new suggestion with local offset
+      try {
+        const offsetMinutes = -new Date().getTimezoneOffset();
+        const absOffset = Math.abs(offsetMinutes);
+        const hours = Math.floor(absOffset / 60).toString().padStart(2, "0");
+        const minutes = (absOffset % 60).toString().padStart(2, "0");
+        const sign = offsetMinutes >= 0 ? "+" : "-";
+        const userOffset = `${sign}${hours}:${minutes}`;
+
+        const newSuggestion = await getAgentSuggestion(currentTasks, userOffset);
+        if (newSuggestion) {
+          setSuggestion(newSuggestion);
+          localStorage.setItem("proactive_auto_suggestion", JSON.stringify(newSuggestion));
+          localStorage.setItem("proactive_last_fetch", Date.now().toString());
+          localStorage.setItem("proactive_task_fingerprint", currentFingerprint);
+        }
+      } catch (err) {
+        console.error("Failed to fetch client-side suggestion:", err);
+      }
+    };
+
+    fetchLocalSuggestion();
+  }, []); // Only runs on page refresh / initial component mount
   const [pendingDecision, setPendingDecision] = useState<AgentResponse | null>(null);
   const [pendingTaskName, setPendingTaskName] = useState("");
   const [confirmLoading, setConfirmLoading] = useState(false);
@@ -118,6 +155,7 @@ export default function CommandInput({ initialTasks, initialSuggestion }: Comman
   const [conflictingTaskNames, setConflictingTaskNames] = useState<string[]>([]);
   const [duplicateTask, setDuplicateTask] = useState(false);
   const [duplicateTaskName, setDuplicateTaskName] = useState("");
+  const [proactiveThinkOpen, setProactiveThinkOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Proactive Notification State
@@ -594,6 +632,35 @@ export default function CommandInput({ initialTasks, initialSuggestion }: Comman
                       </div>
                       <span className="text-[11px] text-slate-400 tabular-nums">{Math.round(suggestion.confidence * 100)}% confidence</span>
                     </div>
+
+                    {/* Proactive Thinking */}
+                    {suggestion.thinkContext && (
+                      <div className="mt-4 pt-3 border-t border-slate-200/50">
+                        <button
+                          type="button"
+                          onClick={() => setProactiveThinkOpen(!proactiveThinkOpen)}
+                          className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-400 hover:text-slate-600 transition-colors cursor-pointer select-none mb-2"
+                        >
+                          <span>{proactiveThinkOpen ? "Hide Thinking" : "Show Thinking"}</span>
+                          <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.5"
+                            className={`w-2.5 h-2.5 transition-transform duration-300 ${proactiveThinkOpen ? "rotate-180" : "rotate-0"}`}
+                          >
+                            <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                        </button>
+                        {proactiveThinkOpen && (
+                          <div className="max-h-40 overflow-y-auto pl-3 border-l-2 border-slate-200">
+                            <p className="text-[11px] text-slate-400 italic leading-relaxed whitespace-pre-wrap font-mono">
+                              {suggestion.thinkContext}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               );

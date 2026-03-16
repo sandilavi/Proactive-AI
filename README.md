@@ -100,7 +100,7 @@ Your Notion database must have the following properties:
 |---|---|
 | `Name` | Title |
 | `Status` | Status (`Not started`, `In Progress`, `Done`) |
-| `Due Date` | Date |
+| `Date` | Date |
 
 Make sure your integration has been **shared** with the database (open the database → Share → Invite your integration).
 

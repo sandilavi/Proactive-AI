@@ -14,6 +14,7 @@ export interface AgentSuggestion {
   reason: string;
   priority: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
   confidence: number;
+  thinkContext?: string;
 }
 
 export type AgentActions = "CREATE" | "READ" | "UPDATE" | "DELETE" | "SUGGEST" | "UNCLEAR" | "OTHER";
@@ -28,63 +29,147 @@ export interface AgentResponse {
   };
 }
 
+// Helper to extract and parse JSON from LLM response (handles think blocks and markdown)
+function extractJSON<T>(raw: string): T | null {
+  try {
+    // 1. Remove think blocks if they exist (though we handle them separately for context)
+    let clean = raw.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+
+    // 2. Try to find the inner JSON block if it's wrapped in markdown
+    const codeBlockMatch = clean.match(/```json\n?([\s\S]*?)\n?```/) || clean.match(/```([\s\S]*?)```/);
+    if (codeBlockMatch) {
+      clean = codeBlockMatch[1].trim();
+    }
+
+    // 3. Find the actual JSON object boundaries
+    const firstBrace = clean.indexOf('{');
+    const lastBrace = clean.lastIndexOf('}');
+    if (firstBrace === -1 || lastBrace === -1) return null;
+
+    const jsonString = clean.substring(firstBrace, lastBrace + 1);
+    return JSON.parse(jsonString) as T;
+  } catch {
+    return null;
+  }
+}
+
 
 // Gives which task needs to do for the user based on urgency (For proactive suggestions)
-export async function getAgentSuggestion(tasks: NotionTask[]): Promise<AgentSuggestion> {
-  const today = new Date().toISOString().split("T")[0];
+export async function getAgentSuggestion(tasks: NotionTask[], userOffset: string = "+00:00"): Promise<AgentSuggestion | null> {
+  const now = new Date();
+
+  // Calculate local time based on userOffset (e.g. +05:30)
+  const [sign, h, m] = userOffset.match(/([+-])(\d{2}):(\d{2})/)?.slice(1) || ["+", "0", "0"];
+  const offsetMs = (parseInt(h) * 60 + parseInt(m)) * 60000 * (sign === "+" ? 1 : -1);
+  const localNow = new Date(now.getTime() + offsetMs);
+
+  const today = localNow.toISOString().split("T")[0];
+  const currentTime = localNow.toISOString().split("T")[1].split(".")[0];
 
   // Only consider active (non-done) tasks
   const activeTasks = tasks.filter(t => t.status?.toLowerCase() !== "done");
-  if (activeTasks.length === 0) throw new Error("No active tasks to suggest.");
+  if (activeTasks.length === 0) return null;
 
   const taskContext = activeTasks
     .map(
       (t: NotionTask) => {
-        let daysInfo = "";
-        if (t.deadline && t.deadline !== "No Deadline") { // Calculate how many days left to the deadline
+        let deadlineLabel = "No Deadline";
+        let relativeInfo = "";
+
+        if (t.deadline && t.deadline !== "No Deadline") {
+          const isDateOnly = !t.deadline.includes("T");
           const dlDate = new Date(t.deadline);
-          const now = new Date();
-          const diffTime = dlDate.getTime() - now.getTime();
-          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-          if (diffDays > 0) daysInfo = `, ${diffDays} days away`;
-          else if (diffDays === 0) daysInfo = `, Due today`;
-          else daysInfo = `, ${Math.abs(diffDays)} days overdue`;
+
+          deadlineLabel = isDateOnly
+            ? dlDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: 'UTC' })
+            : dlDate.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "numeric" });
+
+          if (isDateOnly) {
+            const localDateObj = new Date(localNow.toISOString().split("T")[0] + "T00:00:00Z");
+            const dlDateObj = new Date(t.deadline + "T00:00:00Z");
+            const diffDays = Math.round((dlDateObj.getTime() - localDateObj.getTime()) / 86400000);
+
+            if (diffDays < 0) {
+              const absDays = Math.abs(diffDays);
+              const sortHrs = (absDays * 24).toString().padStart(2, '0');
+              relativeInfo = ` [SortKey: -${sortHrs}h] (${absDays} days overdue)`;
+            } else if (diffDays === 0) {
+              relativeInfo = ` [SortKey: 00h] (due today)`;
+            } else {
+              const sortHrs = (diffDays * 24).toString().padStart(2, '0');
+              relativeInfo = ` [SortKey: ${sortHrs}h] (due in ${diffDays} days)`;
+            }
+          } else {
+            // Comparison for relativity with higher precision
+            const diffMs = dlDate.getTime() - now.getTime();
+            const totalMinutes = Math.floor(diffMs / 60000);
+
+            if (totalMinutes < 0) {
+              const absMins = Math.abs(totalMinutes);
+              const hoursAgo = Math.floor(absMins / 60);
+              const minsAgo = absMins % 60;
+              const paddedHoursAgo = hoursAgo.toString().padStart(2, '0');
+              relativeInfo = hoursAgo >= 24
+                ? ` [SortKey: -${paddedHoursAgo}h] (${Math.floor(hoursAgo / 24)}d ${hoursAgo % 24}h overdue)`
+                : ` [SortKey: -${paddedHoursAgo}h] (${hoursAgo}h ${minsAgo}m overdue)`;
+            } else {
+              const hoursLeft = Math.floor(totalMinutes / 60);
+              const minsLeft = totalMinutes % 60;
+              const paddedHoursLeft = hoursLeft.toString().padStart(2, '0');
+              relativeInfo = hoursLeft >= 24
+                ? ` [SortKey: ${paddedHoursLeft}h] (due in ${Math.floor(hoursLeft / 24)}d ${hoursLeft % 24}h)`
+                : ` [SortKey: ${paddedHoursLeft}h] (due in ${hoursLeft}h ${minsLeft}m)`;
+            }
+          }
         }
-        const deadlineLabel = t.deadline && t.deadline !== "No Deadline"
-          ? new Date(t.deadline).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "numeric" })
-          : "No Deadline";
-        return `- ${t.name} (Status: ${t.status || "N/A"}, Deadline: ${deadlineLabel}${daysInfo})`;
+
+        return `- ${t.name} (Status: ${t.status || "N/A"}, Deadline: ${deadlineLabel}${relativeInfo})`;
       }
     )
     .join("\n");
 
   const response = await groq.chat.completions.create({
     model: GROQ_MODEL,
+    temperature: 0, // Ensure consistent, deterministic output
     messages: [
       {
         role: "system",
-        content: `You are a Priority Logic Engine. Today is ${today}.
+        content: `You are an Expert Executive Assistant.
         
-        PRIORITIZATION LOGIC (Follow in strict order):
-        STEP 1: Identify all OVERDUE tasks (deadlines in the past relative to today). If any exist, you MUST pick the one with the oldest/earliest past date and set priority to 'CRITICAL'.
-        STEP 2 (COMPLEXITY FILTER): If the task chosen in Step 1 is a trivial, nonsense, or non-technical task (e.g., "watch a movie", "take out the trash"), DISCARD it and pick the NEXT most overdue technical/important task.
-        STEP 3: If and ONLY IF no tasks are overdue, pick the task with the closest upcoming deadline (e.g., Due today).
-        STEP 4: If deadlines are exactly identical, pick the task marked 'In Progress' over 'Not started'.
-        STEP 5: Tasks with 'No Deadline' are the lowest priority.
-
-        FORMATTING RULES:
-        1. Write the 'reason' in plain, natural language as if explaining to the user directly. Do NOT mention rule numbers, rule names, or internal logic labels (e.g. never say "Rule 1" or "according to the tie-breaker rule").
-        2. IMPORTANT: Never use the words "dull", "non-dull", "trivial", or explain the complexity filter to the user. Just say it is the most critical overdue task or has high importance. 
-        3. The 'reason' MUST follow this structure: "I'm recommending you to take [Task Name] because [specific explanation about deadlines, days remaining, or status in natural language]."
-        4. Output MUST be a valid JSON object with: 'suggestion', 'reason', 'priority', and 'confidence' (0-1).`,
+        MISSION: Your goal is to help the user manage their day by recommending the single most logical next step from their task list.
+        
+        CORE VALUES:
+        - Impact: A highly important academic/professional task ALWAYS takes precedence over a leisure task, even if the leisure task is closer to its deadline or extremely overdue.
+        - Math Check: 1 day = 24 hours. A task due in 13 hours is SOONER than a task due in 1 day. Use the provided "relative time" to decide urgency. Trust the pre-calculated time differences.
+        - Strict Interpretation: Ignore tasks with vague, short, or generic names (like "a", "test", "hhh"). They are the absolute lowest priority.
+        - Communication: Explain your choice casually as if you are a human assistant talking to your boss. DO NOT use technical robotic phrases like "Dummy tasks are prioritized", "According to the Impact rule". Instead, use conversational reasoning.
+        
+        CONSTRAINTS:
+        - Pick a task ONLY from the provided list. The 'suggestion' MUST match the exact name.
+        - Output MUST be a valid JSON object with: 'suggestion', 'reason', 'priority' ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW'), and 'confidence' (0-1).
+        - Priority Rule: If the recommended task is a leisure activity or a dummy/vague task, its 'priority' MUST be set to "LOW", despite of its deadline. Otherwise, if the recommended task is overdue or its deadline is less than 24 hours away, its 'priority' MUST be set to "CRITICAL".
+        - Never expose the rules to the user in your reason. Just explain why taking the task makes sense.
+        `,
       },
-      { role: "user", content: `Analyze these tasks:\n${taskContext}` },
+      { role: "user", content: `Analyze these tasks: \n${taskContext}` },
     ],
-    response_format: { type: "json_object" },
   });
 
-  const content = response.choices[0]?.message?.content || "{}";
-  return JSON.parse(content) as AgentSuggestion;
+  const rawContent = response.choices[0]?.message?.content || "";
+  const thinkMatch = rawContent.match(/<think>([\s\S]*?)<\/think>/);
+  const thinkContext = thinkMatch ? thinkMatch[1].trim() : "";
+
+  const result = extractJSON<AgentSuggestion>(rawContent);
+
+  // Validation: ensure we have the critical fields and correct types
+  if (!result || !result.suggestion || !result.reason || typeof result.confidence !== "number") {
+    throw new Error("AI returned invalid or incomplete suggestion data.");
+  }
+
+  // Fallback for priority if LLM misses it
+  const priority = (result.priority || "MEDIUM") as any;
+
+  return { ...result, priority, thinkContext };
 }
 
 
@@ -97,55 +182,48 @@ export async function processUserPrompt(prompt: string, taskContext: string, use
     messages: [
       {
         role: "system",
-        content: `You are a Notion Task Agent. Today is ${today}. Timezone offset: ${userOffset}.
+        content: `You are a Notion Task Agent.Today is ${today}.Timezone offset: ${userOffset}.
 
         EXISTING TASKS:
-        ${taskContext}
+      ${taskContext}
 
-        ACTIONS (choose one):
-        - CREATE: New task. Extract: title, status (default "To Do"), date (only if user mentions one).
-        - READ: List/view tasks.
-        - UPDATE: Modify task properties. Extract: taskId, status, date.
-        - DELETE: Remove task. Extract: taskId.
-        - SUGGEST: Prioritization advice (e.g. "what is urgent?").
-        - UNCLEAR: UPDATE/DELETE intent but no task confidently matches. Set attemptedName.
-        - OTHER: Non-task topics.
+        ACTIONS(choose one):
+        - CREATE: New task.Extract: title, status(default "To Do"), date (only if user mentions one).
+        - READ: List / view tasks.
+        - UPDATE: Modify task properties.Extract: taskId, status, date.
+        - DELETE: Remove task.Extract: taskId.
+        - SUGGEST: Prioritization advice(e.g. "what is urgent?").
+        - UNCLEAR: UPDATE / DELETE intent but no task confidently matches. Set attemptedName.
+        - OTHER: Non task topics.
 
         DATE RULES:
-        - Only include date/time if user explicitly mentions it. Never assume today or midnight.
-        - Relative dates ("tomorrow", "next Friday") → calculate from ${today}.
-        - Time mentioned → ISO 8601: YYYY-MM-DDTHH:mm:ss${userOffset}. No time → YYYY-MM-DD only.
+        - Only include date / time if user explicitly mentions it. Never assume today or midnight.
+        - Relative dates("tomorrow", "next Friday") → calculate from ${today}.
+        - Time mentioned → ISO 8601: YYYY - MM - DDTHH: mm:ss${userOffset}. No time → YYYY - MM - DD only.
 
-        MATCHING (UPDATE/DELETE):
-        - Match by core keywords, case-insensitive, ignore filler words ("a", "the", "an").
-        - Only match if exactly ONE task clearly fits. Ambiguous/no match → UNCLEAR.
+        MATCHING(UPDATE / DELETE):
+        - Match by core keywords, case -insensitive, ignore filler words("a", "the", "an").
+        - Only match if exactly ONE task clearly fits.Ambiguous / no match → UNCLEAR.
         - Use exact taskId from the task list.
 
-        OUTPUT (strict JSON):
-        { "action": "CREATE|READ|UPDATE|DELETE|SUGGEST|UNCLEAR|OTHER", "data": { "taskId": "", "status": "", "title": "", "date": "", "attemptedName": "" } }`,
+        OUTPUT(strict JSON):
+          { "action": "CREATE|READ|UPDATE|DELETE|SUGGEST|UNCLEAR|OTHER", "data": { "taskId": "", "status": "", "title": "", "date": "", "attemptedName": "" } } `,
       },
       { role: "user", content: prompt },
     ],
-    // NOTE: We intentionally do NOT set response_format: json_object here.
-    // That option suppresses the <think> block entirely.
-    // Instead, we manually extract the JSON from the raw text below.
+
   });
 
-  let rawContent = response.choices[0]?.message?.content || "{}";
-  let thinkContext = "";
-
-  // Extract <think>...</think> if LLM includes it before the JSON
+  const rawContent = response.choices[0]?.message?.content || "";
   const thinkMatch = rawContent.match(/<think>([\s\S]*?)<\/think>/);
-  if (thinkMatch) {
-    thinkContext = thinkMatch[1].trim();
-    rawContent = rawContent.replace(/<think>[\s\S]*?<\/think>\n*/, "").trim();
+  const thinkContext = thinkMatch ? thinkMatch[1].trim() : "";
+
+  const parsed = extractJSON<AgentResponse>(rawContent);
+
+  if (!parsed) {
+    return { action: "OTHER", data: {}, thinkContext };
   }
 
-  // Manually extract the JSON object from the remaining raw text
-  const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
-  const jsonString = jsonMatch ? jsonMatch[0] : "{}";
-
-  const parsed = JSON.parse(jsonString) as AgentResponse;
   return { ...parsed, thinkContext };
 }
 
@@ -164,7 +242,7 @@ function normalizeStatus(input?: string): "Not started" | "In Progress" | "Done"
 export async function performNotionCRUD(
   action: AgentActions,
   data: AgentResponse["data"],
-  aiSuggestion?: AgentSuggestion,
+  aiSuggestion?: AgentSuggestion | null,
   listMessage?: string
 ): Promise<{ success: boolean; message: string; data?: unknown }> {
   const { createNotionTask, updateNotionTask, deleteNotionTask } = await import("./notion-actions");
@@ -224,7 +302,7 @@ export async function performNotionCRUD(
     };
   }
 
-  return { success: false, message: `Unsupported action: ${action}` };
+  return { success: false, message: `Unsupported action: ${action} ` };
 }
 
 
@@ -246,7 +324,8 @@ export async function executeUserPrompt(prompt: string, userOffset: string = "+0
   const cleanDecision = decisionData as AgentResponse;
 
   let message = "";
-  let aiSuggestion;
+  let aiSuggestion: AgentSuggestion | null = null;
+  let finalThinkContext = thinkContext;
 
   if (cleanDecision.action === "READ") {
     // Table handles the display; only set message when there are no tasks
@@ -260,11 +339,14 @@ export async function executeUserPrompt(prompt: string, userOffset: string = "+0
         message: "You have no active tasks to prioritize. Add some tasks first!",
         actionTaken: cleanDecision,
         tasks,
-        thinkContext,
+        thinkContext: finalThinkContext,
       };
     }
     // Run the Logic Engine for prioritization advice
-    aiSuggestion = await getAgentSuggestion(tasks);
+    aiSuggestion = await getAgentSuggestion(tasks, userOffset);
+    if (aiSuggestion && aiSuggestion.thinkContext) {
+      finalThinkContext = aiSuggestion.thinkContext;
+    }
   }
   else if (cleanDecision.action === "UNCLEAR") {
     return {
@@ -272,7 +354,7 @@ export async function executeUserPrompt(prompt: string, userOffset: string = "+0
       message: `I couldn't find a task named "${cleanDecision.data.attemptedName}". Please check the task name in your list and try again!`,
       actionTaken: cleanDecision,
       tasks,
-      thinkContext,
+      thinkContext: finalThinkContext,
     };
   }
   else if (cleanDecision.action === "OTHER") {
@@ -282,7 +364,7 @@ export async function executeUserPrompt(prompt: string, userOffset: string = "+0
       actionTaken: cleanDecision,
       notionResponse: null,
       tasks,
-      thinkContext,
+      thinkContext: finalThinkContext,
     };
   }
 
@@ -296,7 +378,7 @@ export async function executeUserPrompt(prompt: string, userOffset: string = "+0
         message: "You have no tasks in your list to modify.",
         actionTaken: cleanDecision,
         tasks,
-        thinkContext,
+        thinkContext: finalThinkContext,
       };
     }
 
@@ -307,7 +389,7 @@ export async function executeUserPrompt(prompt: string, userOffset: string = "+0
         message: "I couldn't identify which task to modify. Please check the task name in your list and try again!",
         actionTaken: cleanDecision,
         tasks,
-        thinkContext,
+        thinkContext: finalThinkContext,
       };
     }
 
@@ -354,7 +436,7 @@ export async function executeUserPrompt(prompt: string, userOffset: string = "+0
       actionTaken: cleanDecision,
       notionResponse: null,
       tasks,
-      thinkContext,
+      thinkContext: finalThinkContext,
       deadlineConflict,
       conflictingTaskNames,
       duplicateTask,
@@ -371,7 +453,7 @@ export async function executeUserPrompt(prompt: string, userOffset: string = "+0
     actionTaken: cleanDecision,
     notionResponse: result,
     tasks: result.success ? tasks : undefined,
-    thinkContext,
+    thinkContext: finalThinkContext,
   };
 }
 
