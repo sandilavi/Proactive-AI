@@ -5,8 +5,12 @@ import { fetchNotionTasks } from "@/app/actions/notion-actions";
 import { Info, X, List, Zap, Trash2, Calendar, CheckCircle2, AlertTriangle, Check, Bell, BellRing, Clock } from "lucide-react";
 
 // Proactive Notification Timer
-const NOTIFICATION_INTERVAL = 2 * 60 * 1000;  // 2 minutes
-const TASK_SYNC_INTERVAL   = 2 * 60 * 1000;  // 2 minutes
+const NOTIFICATION_INTERVAL    = 5  * 60 * 1000; // 5 minutes
+const TASK_SYNC_INTERVAL       = 2  * 60 * 1000; // 2 minutes
+
+// Proactive AI Suggestion Timer
+const SUGGESTION_CACHE_TIME       = 30 * 60 * 1000; // 30 minutes (cache validity)
+const SUGGESTION_REFRESH_INTERVAL = 30 * 60 * 1000 + 1000; // 30min + 1s (auto-refresh, always arrives after cache expires)
 
 interface ProactiveAlert {
   id: string;
@@ -102,14 +106,20 @@ export default function CommandInput({ initialTasks }: CommandInputProps) {
       const currentTasks = taskList || initialTasks;
       if (!currentTasks || currentTasks.length === 0) return;
 
+      // GUARD: Only fetch or update the suggestion if the user is in the "Initial State"
+      // This prevents the card from suddenly appearing or changing while the user is in a chat.
+      if (message || pendingDecision || status !== "idle") {
+        return;
+      }
+
       // Handle Caching: Don't re-fetch if we have a fresh one AND tasks haven't changed
       const cached = localStorage.getItem("proactive_auto_suggestion");
       const lastFetch = localStorage.getItem("proactive_last_fetch");
       const lastFingerprint = localStorage.getItem("proactive_task_fingerprint");
-      const cacheTime = 60 * 60 * 1000; // 60 minutes
-
+      const cacheTime = SUGGESTION_CACHE_TIME;
+      
       // Create a fingerprint of current tasks (ID + Status + Name + Deadline)
-      const currentFingerprint = currentTasks.map(t => `${t.id}-${t.name}-${t.status}-${t.deadline}`).join("|");
+      const currentFingerprint = (taskList || initialTasks || []).map(t => `${t.id}-${t.name}-${t.status}-${t.deadline}`).join("|");
 
       const isCacheValid = cached && lastFetch && (Date.now() - parseInt(lastFetch) < cacheTime);
       const isTaskListSame = lastFingerprint === currentFingerprint;
@@ -131,10 +141,42 @@ export default function CommandInput({ initialTasks }: CommandInputProps) {
         const sign = offsetMinutes >= 0 ? "+" : "-";
         const userOffset = `${sign}${hours}:${minutes}`;
 
-        const newSuggestion = await getAgentSuggestion(currentTasks, userOffset);
+        const newSuggestion = await getAgentSuggestion(taskList || initialTasks || [], userOffset);
         if (newSuggestion) {
-          setSuggestion(newSuggestion);
-          localStorage.setItem("proactive_auto_suggestion", JSON.stringify(newSuggestion));
+          let finalSuggestion = newSuggestion;
+
+          // Smart Consistency Check:
+          // 1. If suggestion & priority match EXACTLY:
+          //    - If confidence change is minor (< 15%), stick to the old card entirely (no flicker).
+          //    - If confidence change is major (>= 15%), update the whole card (reveal new reasoning).
+          if (cached) {
+            try {
+              const old = JSON.parse(cached);
+              const isSameTask = old && old.suggestion === newSuggestion.suggestion && old.priority === newSuggestion.priority;
+              
+              if (isSameTask) {
+                const confDiff = Math.abs((old.confidence || 0) - (newSuggestion.confidence || 0));
+                
+                if (confDiff < 0.15) {
+                  // Minor shift: Use old text AND old confidence to keep UI "frozen"
+                  finalSuggestion = {
+                    ...newSuggestion,
+                    reason: old.reason,
+                    confidence: old.confidence,
+                    thinkContext: old.thinkContext ?? newSuggestion.thinkContext
+                  };
+                } else {
+                  // Major shift: Let the new suggestion flow through (FinalSuggestion is already newSuggestion)
+                  console.log(`[Proactive] Significant confidence shift (${Math.round(confDiff*100)}%). Updating reason.`);
+                }
+              }
+            } catch {
+              // Ignore parse errors, just use new suggestion
+            }
+          }
+
+          setSuggestion(finalSuggestion);
+          localStorage.setItem("proactive_auto_suggestion", JSON.stringify(finalSuggestion));
           localStorage.setItem("proactive_last_fetch", Date.now().toString());
           localStorage.setItem("proactive_task_fingerprint", currentFingerprint);
         }
@@ -144,7 +186,14 @@ export default function CommandInput({ initialTasks }: CommandInputProps) {
     };
 
     fetchLocalSuggestion();
-  }, []); // Only runs on page refresh / initial component mount
+    
+    // Auto-refresh interval: runs slightly after cache expiry to guarantee a fresh fetch.
+    const interval = setInterval(() => {
+      fetchLocalSuggestion();
+    }, SUGGESTION_REFRESH_INTERVAL);
+
+    return () => clearInterval(interval);
+  }, [taskList, initialTasks]);
   const [pendingDecision, setPendingDecision] = useState<AgentResponse | null>(null);
   const [pendingTaskName, setPendingTaskName] = useState("");
   const [confirmLoading, setConfirmLoading] = useState(false);
@@ -244,7 +293,7 @@ export default function CommandInput({ initialTasks }: CommandInputProps) {
 
         setActiveToasts(mergedToasts.sort((a, b) => urgencyRank[a.urgency] - urgencyRank[b.urgency]));
       } catch {
-        // Silently fail — don't disrupt the user's workflow on a background check error
+        // Silently fail - don't disrupt the user's workflow on a background check error
       }
     };
 
@@ -253,7 +302,7 @@ export default function CommandInput({ initialTasks }: CommandInputProps) {
     return () => clearInterval(intervalId); // cleanup on unmount
   }, [fireOsNotification]);
 
-  // Background task sync — silently re-fetch Notion tasks every 60 seconds
+  // Background task sync - silently re-fetch Notion tasks every 60 seconds
   // Only updates the task table when it is currently visible (taskList !== null)
   // Skips update during confirmation flow to avoid disrupting the user
   useEffect(() => {
@@ -261,12 +310,12 @@ export default function CommandInput({ initialTasks }: CommandInputProps) {
       try {
         const fresh = await fetchNotionTasks();
         setTaskList(prev => {
-          if (prev === null) return prev;          // table hidden — don't show it
-          if (pendingDecision) return prev;        // mid-confirmation — don't disrupt
+          if (prev === null) return prev;          // table hidden - don't show it
+          if (pendingDecision) return prev;        // mid-confirmation - don't disrupt
           return fresh;                            // silently swap in fresh data
         });
       } catch {
-        // Silently fail — don't disrupt user on a background sync error
+        // Silently fail - don't disrupt user on a background sync error
       }
     };
 
@@ -434,7 +483,7 @@ export default function CommandInput({ initialTasks }: CommandInputProps) {
                  Mark all as read
                </button>
              </div>
-             {activeToasts.map(toast => {
+                {activeToasts.map(toast => {
                const s = urgencyStyles[toast.urgency];
                return (
                  <div key={toast.id} className={`rounded-xl border shadow-sm overflow-hidden ${s.border}`}>
@@ -464,8 +513,8 @@ export default function CommandInput({ initialTasks }: CommandInputProps) {
                    </div>
                  </div>
                );
-             })}
-           </div>
+                })}
+              </div>
          );
        })()}
 
@@ -526,7 +575,7 @@ export default function CommandInput({ initialTasks }: CommandInputProps) {
              </div>
            </form>
 
-             {/* Thinking + Response — unified card */}
+             {/* Thinking + Response - unified card */}
              {(thinkContext || message || pendingDecision) && (
                <div className={`mt-5 rounded-xl border px-5 py-4 ${
                  pendingDecision?.action === "DELETE"
@@ -534,7 +583,7 @@ export default function CommandInput({ initialTasks }: CommandInputProps) {
                    : "border-blue-100 bg-blue-50/50"
                }`}>
 
-                 {/* Show thinking toggle — first */}
+                 {/* Show thinking toggle - first */}
                  {thinkContext && (
                    <div className={(message || pendingDecision) ? "mb-4" : ""}>
                      <button
@@ -552,7 +601,7 @@ export default function CommandInput({ initialTasks }: CommandInputProps) {
                          <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round"/>
                        </svg>
                      </button>
-                     {/* Scrollable full think log — no cutoff */}
+                     {/* Scrollable full think log - no cutoff */}
                      {thinkOpen && (
                        <div className="mt-2 max-h-60 overflow-y-auto pl-3 border-l-2 border-slate-200">
                          <p className="text-[12px] text-slate-400 italic leading-relaxed whitespace-pre-wrap font-mono">
@@ -563,14 +612,40 @@ export default function CommandInput({ initialTasks }: CommandInputProps) {
                    </div>
                  )}
 
-                 {/* Confirmation content — replaces message area during confirmation */}
+                 {/* Confirmation content - replaces message area during confirmation */}
                  {pendingDecision ? (
-                   <div>
-                     <p className="text-sm text-slate-700 mb-4">
-                       {pendingDecision.action === "DELETE" && <>I&apos;m about to permanently delete <strong>&quot;{pendingTaskName}&quot;</strong>. This cannot be undone.</>}
-                       {pendingDecision.action === "UPDATE" && <>I&apos;m about to update <strong>&quot;{pendingTaskName}&quot;</strong>{pendingDecision.data.status && <> \u2192 Status: <strong>{pendingDecision.data.status}</strong></>}{pendingDecision.data.date && <> \u2192 Due: <strong>{formatDeadline(pendingDecision.data.date)}</strong></>}.</>}
-                       {pendingDecision.action === "CREATE" && <>I&apos;m about to create: <strong>&quot;{pendingDecision.data.title}&quot;</strong>{pendingDecision.data.date && <> due <strong>{formatDeadline(pendingDecision.data.date)}</strong></>}.</>}
-                     </p>
+                    <div>
+                      <p className="text-sm text-slate-700 mb-4">
+                        {pendingDecision.action === "DELETE" && <>I&apos;m about to permanently delete <strong>&quot;{pendingTaskName}&quot;</strong>. This cannot be undone.</>}
+                        {pendingDecision.action === "UPDATE" && <>I&apos;m about to update <strong>&quot;{pendingTaskName}&quot;</strong>{pendingDecision.data.status && <> \u2192 Status: <strong>{pendingDecision.data.status}</strong></>}{pendingDecision.data.date && <> \u2192 Due: <strong>{formatDeadline(pendingDecision.data.date)}</strong></>}.</>}
+                        {pendingDecision.action === "CREATE" && <>I&apos;m about to create: <strong>&quot;{pendingDecision.data.title}&quot;</strong>{pendingDecision.data.date && <> due <strong>{formatDeadline(pendingDecision.data.date)}</strong></>}.</>}
+                        {pendingDecision.action === "PLAN" && <>I&apos;m about to create a roadmap plan with <strong>{pendingDecision.data.plan?.length || 0} tasks</strong>:</>}
+                      </p>
+
+                      {pendingDecision.action === "PLAN" && pendingDecision.data.planSummary && (
+                        <div className="mb-4 p-3 bg-blue-50 border border-blue-100 rounded-lg">
+                          <p className="text-xs text-blue-800 italic leading-relaxed">
+                            <span className="font-bold uppercase tracking-wider text-[10px] mr-2">Feasibility:</span>
+                            {pendingDecision.data.planSummary}
+                          </p>
+                        </div>
+                      )}
+
+                      {pendingDecision.action === "PLAN" && pendingDecision.data.plan && (
+                        <div className="mb-4 max-h-60 overflow-y-auto pr-1">
+                          <ul className="space-y-3">
+                            {pendingDecision.data.plan.map((t, i) => (
+                              <li key={i} className="text-sm text-slate-700 bg-white/50 p-3 rounded-lg border border-slate-100 shadow-sm">
+                                <div className="font-semibold flex items-center justify-between">
+                                  <span>{t.title}</span>
+                                  {t.date && <span className="text-[11px] font-normal text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{formatDeadline(t.date)}</span>}
+                                </div>
+                                {t.reason && <p className="text-xs text-slate-500 mt-1">{t.reason}</p>}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                      {/* Deadline conflict warning */}
                      {deadlineConflict && conflictingTaskNames.length > 0 && (
                        <div className="mb-4 flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5">
@@ -614,7 +689,7 @@ export default function CommandInput({ initialTasks }: CommandInputProps) {
              )}
 
             {/* Proactive Suggestion Card */}
-            {suggestion && (() => {
+            {suggestion && !message && !pendingDecision && status === "idle" && (() => {
               const pc = priorityConfig(suggestion.priority);
               return (
                 <div className={`mt-5 rounded-xl border overflow-hidden ${pc.border}`}>
