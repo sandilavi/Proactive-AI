@@ -7,6 +7,9 @@ export interface NotionTask {
   name: string;
   status?: string;
   deadline?: string;
+  databaseId?: string;
+  databaseName?: string;
+  propNames?: { title: string; status: string; date: string };
 }
 
 export interface AgentSuggestion {
@@ -26,6 +29,7 @@ export interface AgentResponse {
     date?: string;
     taskId?: string;
     attemptedName?: string;
+    targetDatabase?: string; // Database name for CREATE/PLAN routing
     planSummary?: string;
     plan?: Array<{
       title: string;
@@ -61,6 +65,14 @@ function extractJSON<T>(raw: string): T | null {
 }
 
 
+// Centralized priority logic to ensure server-side math is the source of truth
+function getUrgencyCategory(hours: number): "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" {
+  if (hours < 24) return "CRITICAL"; // Overdue or due within 24h
+  if (hours < 72) return "HIGH";     // 1 to 3 days
+  if (hours < 168) return "MEDIUM";  // 3 to 7 days
+  return "LOW";                      // More than 7 days
+}
+
 // Calculate deadlines and pass it to the getAgentSuggestion function
 function calculateDeadlineInfo(deadline: string | undefined | null, localNow: Date, now: Date): { deadlineLabel: string, relativeInfo: string } {
   let deadlineLabel = "No Deadline";
@@ -74,43 +86,29 @@ function calculateDeadlineInfo(deadline: string | undefined | null, localNow: Da
       ? dlDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: 'UTC' })
       : dlDate.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "numeric" });
 
+    let sortHrs = 0;
+    let humanDiff = "";
+
     if (isDateOnly) {
       const localDateObj = new Date(localNow.toISOString().split("T")[0] + "T00:00:00Z");
       const dlDateObj = new Date(deadline + "T00:00:00Z");
       const diffDays = Math.round((dlDateObj.getTime() - localDateObj.getTime()) / 86400000);
-
-      if (diffDays < 0) {
-        const absDays = Math.abs(diffDays);
-        const sortHrs = (absDays * 24).toString().padStart(2, '0');
-        relativeInfo = ` [SortKey: -${sortHrs}h] (${absDays} days overdue)`;
-      } else if (diffDays === 0) {
-        relativeInfo = ` [SortKey: 00h] (due today)`;
-      } else {
-        const sortHrs = (diffDays * 24).toString().padStart(2, '0');
-        relativeInfo = ` [SortKey: ${sortHrs}h] (due in ${diffDays} days)`;
-      }
+      sortHrs = diffDays * 24;
+      humanDiff = diffDays < 0 ? `${Math.abs(diffDays)} days overdue` : diffDays === 0 ? "due today" : `due in ${diffDays} days`;
     } else {
-      // Comparison for relativity with higher precision
       const diffMs = dlDate.getTime() - now.getTime();
-      const totalMinutes = Math.floor(diffMs / 60000);
-
-      if (totalMinutes < 0) {
-        const absMins = Math.abs(totalMinutes);
-        const hoursAgo = Math.floor(absMins / 60);
-        const minsAgo = absMins % 60;
-        const paddedHoursAgo = hoursAgo.toString().padStart(2, '0');
-        relativeInfo = hoursAgo >= 24
-          ? ` [SortKey: -${paddedHoursAgo}h] (${Math.floor(hoursAgo / 24)}d ${hoursAgo % 24}h overdue)`
-          : ` [SortKey: -${paddedHoursAgo}h] (${hoursAgo}h ${minsAgo}m overdue)`;
+      sortHrs = diffMs / 3600000;
+      const absHrs = Math.abs(sortHrs);
+      if (sortHrs < 0) {
+        humanDiff = absHrs >= 24 ? `${Math.floor(absHrs / 24)}d ${Math.floor(absHrs % 24)}h overdue` : `${Math.floor(absHrs)}h ${Math.floor((absHrs * 60) % 60)}m overdue`;
       } else {
-        const hoursLeft = Math.floor(totalMinutes / 60);
-        const minsLeft = totalMinutes % 60;
-        const paddedHoursLeft = hoursLeft.toString().padStart(2, '0');
-        relativeInfo = hoursLeft >= 24
-          ? ` [SortKey: ${paddedHoursLeft}h] (due in ${Math.floor(hoursLeft / 24)}d ${hoursLeft % 24}h)`
-          : ` [SortKey: ${paddedHoursLeft}h] (due in ${hoursLeft}h ${minsLeft}m)`;
+        humanDiff = absHrs >= 24 ? `due in ${Math.floor(absHrs / 24)}d ${Math.floor(absHrs % 24)}h` : `due in ${Math.floor(absHrs)}h ${Math.floor((absHrs * 60) % 60)}m`;
       }
     }
+
+    const urgency = getUrgencyCategory(sortHrs);
+    const daysVal = (sortHrs / 24).toFixed(1);
+    relativeInfo = ` [Time: ${sortHrs.toFixed(1)}h (~${daysVal} days) | Urgency: ${urgency} | ${humanDiff}]`;
   }
 
   return { deadlineLabel, relativeInfo };
@@ -144,7 +142,7 @@ export async function getAgentSuggestion(tasks: NotionTask[], userOffset: string
       (t: NotionTask) => {
         const { deadlineLabel, relativeInfo } = calculateDeadlineInfo(t.deadline, localNow, now);
 
-        return `- ${t.name} (Status: ${t.status || "N/A"}, Deadline: ${deadlineLabel}${relativeInfo})`;
+        return `- ${t.name} (Status: ${t.status || "N/A"}, Deadline: ${deadlineLabel} | ${relativeInfo})`;
       }
     )
     .join("\n");
@@ -161,28 +159,27 @@ export async function getAgentSuggestion(tasks: NotionTask[], userOffset: string
         
         CORE VALUES:
         - Impact: A professional task > a leisure task > a generic placeholder.
-        - Math Check: Trust the pre-calculated time differences (SortKey).
+        - Math Check: TRUST the pre-calculated Urgency label and Time stats provided. DO NOT attempt to perform your own math comparisons or range checks.
         - Strict Interpretation: Generic/Dummy tasks (like "abc", "test", "hhh") are the absolute BOTTOM. A real leisure task (like "watch a movie") ALWAYS takes precedence over a dummy placeholder.
-        - Communication: Explain your choice casually as if you are a human assistant talking to your boss. DO NOT use technical robotic phrases like "Dummy tasks are prioritized", "According to the Impact rule". Instead, use conversational reasoning.
+        - Communication: Explain your choice casually as if you are a human assistant talking to your boss. DO NOT use technical robotic phrases, logic rules, or mention internal categories. Instead, use conversational reasoning.
         - TIME PHRASING: Use honest relative terms based on the current time (e.g., "by later today", "tomorrow afternoon", "in a few days"). NEVER use exact numeric hours/minutes. If a deadline crosses midnight, it is "tomorrow", not "today", regardless of the hour count.
-        - NO INTERNAL EXPOSURE: NEVER mention internal terms like "CRITICAL", "HIGH", "SortKey", etc. NEVER mention numeric hour ranges (like 00h-23.99h). NEVER mention task categories like "Professional", "Leisure", or "Placeholder". Just give a natural human reason.
+        - NO INTERNAL EXPOSURE: NEVER mention internal terms like "CRITICAL", "HIGH", "Urgency", "Placeholder", etc. Just give a natural human reason why a task is important.
         
         PRIORITY LOGIC (STRICT HIERARCHY):
           1. EVALUATE TASK TYPE (Rule #1): 
              - If task is Generic/Placeholder (e.g. "abc", "test", "hhh") -> Priority is ALWAYS "LOW".
              - If task is Leisure (e.g. "watch movie", "play games") -> Priority is ALWAYS "LOW".
-          2. EVALUATE DEADLINE MATH (Rule #2 - ONLY for Professional Tasks):
-             - IF SortKey is Negative (e.g. -01h, -48h) -> "CRITICAL".
-             - IF SortKey is 00h up to 23.99h -> "CRITICAL" (Exactly 24h is HIGH).
-             - IF SortKey is 24h up to 71.99h -> "HIGH" (Exactly 72h is MEDIUM).
-             - IF SortKey is 72h up to 167.99h -> "MEDIUM" (Exactly 168h is LOW).
-             - IF SortKey is 168h or Greater -> "LOW".
+          2. EVALUATE DEADLINE (Rule #2 - ONLY for Professional Tasks):
+             - Use the provided Urgency label (CRITICAL, HIGH, MEDIUM, LOW).
+             - These labels are pre-calculated based on time to deadline:
+               * CRITICAL: Overdue or < 24h.
+               * HIGH: 1 to 3 days (24-72h).
+               * MEDIUM: 3 to 7 days (72-168h).
+               * LOW: 7+ days (168h+).
           
           STRICT RULES:
-          - ABSOLUTE PRIORITY: NEVER use relative priority. If the math says "LOW", the label MUST be "LOW", even if it is the most urgent task in the entire list.
-          - NO ROUNDING: Do not round SortKey values. Treat them as precise floating point numbers.
-          - IMPACT CHECK: Rule #1 always wins. An overdue movie is LOW. A placeholder due in 1 hour is LOW.
-          - MATH REALITY CHECK: 24h is exactly 24.0. Since 24.0 is NOT less than 23.99, it is HIGH (not Critical). 72h is MEDIUM. 168h is LOW.
+          - ABSOLUTE PRIORITY: Rule #1 always wins. An overdue leisure task is LOW. A placeholder due in 1 hour is LOW.
+          - IMPACT OVERRIDE: If the pre-calculated Urgency is HIGH but the task is a Placeholder, the final Priority MUST be LOW.
         
         CONSTRAINTS:
         - Output MUST be a valid JSON object.
@@ -215,8 +212,12 @@ export async function getAgentSuggestion(tasks: NotionTask[], userOffset: string
 
 
 // Analyze user prompt and decides which action needs to take
-export async function processUserPrompt(prompt: string, taskContext: string, userOffset: string): Promise<AgentResponse & { thinkContext?: string }> {
+export async function processUserPrompt(prompt: string, taskContext: string, userOffset: string, databaseNames: string[] = []): Promise<AgentResponse & { thinkContext?: string }> {
   const today = new Date().toISOString().split("T")[0];
+
+  const dbListStr = databaseNames.length > 0
+    ? `\n\nAVAILABLE DATABASES: ${databaseNames.map(n => `"${n}"`).join(", ")}\n- For CREATE/PLAN: pick the most logical database based on the task context. Set "targetDatabase" to the exact database name.\n- For UPDATE/DELETE: the taskId is globally unique, no database routing needed.`
+    : "";
 
   const response = await groq.chat.completions.create({
     model: GROQ_MODEL,
@@ -226,10 +227,10 @@ export async function processUserPrompt(prompt: string, taskContext: string, use
         content: `You are a Notion Task Agent.Today is ${today}.Timezone offset: ${userOffset}.
 
         EXISTING TASKS:
-      ${taskContext}
+      ${taskContext}${dbListStr}
 
   ACTIONS(choose one):
-  - CREATE: New task.Extract: title, status(default "To Do"), date(only if user mentions one).
+  - CREATE: New task.Extract: title, status(default "To Do"), date(only if user mentions one), targetDatabase.
   - READ: List / view tasks.
         - UPDATE: Modify task properties.Extract: taskId, status, date.
         - DELETE: Remove task.Extract: taskId.
@@ -239,7 +240,7 @@ export async function processUserPrompt(prompt: string, taskContext: string, use
     - CRITICAL: 3 units | HIGH: 2 units | MEDIUM: 1 unit | LOW: 0.5 units.
           - DAILY CAPACITY: Each day has a 4 - unit threshold.
           Distribute new subtasks(assume 1 unit each) by filling the remaining capacity on days where EXISTING TASKS do not already reach the 4 - unit limit.Only skip days that are at maximum theoretical capacity.
-          NEVER use a Task ID as a title.Extract: a concise 'planSummary'(1 - 2 sentences) providing a density - based feasibility analysis(e.g., "I scheduled Step 2 on Tuesday as your existing low-weight tasks leave 3 units of cognitive headroom"), and an array of subtasks with title, date, and reason in the 'plan' array.
+          NEVER use a Task ID as a title.Extract: a concise 'planSummary'(1 - 2 sentences) providing a density - based feasibility analysis(e.g., "I scheduled Step 2 on Tuesday as your existing low-weight tasks leave 3 units of cognitive headroom"), targetDatabase, and an array of subtasks with title, date, and reason in the 'plan' array.
         - UNCLEAR: UPDATE / DELETE intent but no task confidently matches.Set attemptedName.
         - OTHER: Non task topics.
 
@@ -257,7 +258,7 @@ export async function processUserPrompt(prompt: string, taskContext: string, use
   {
     "action": "CREATE|READ|UPDATE|DELETE|SUGGEST|PLAN|UNCLEAR|OTHER",
       "data": {
-      "taskId": "", "status": "", "title": "", "date": "", "attemptedName": "",
+      "taskId": "", "status": "", "title": "", "date": "", "attemptedName": "", "targetDatabase": "",
         "planSummary": "Short feasibility analysis here",
           "plan": [{ "title": "", "date": "", "reason": "" }]
     }
@@ -295,14 +296,23 @@ export async function performNotionCRUD(
   action: AgentActions,
   data: AgentResponse["data"],
   aiSuggestion?: AgentSuggestion | null,
-  listMessage?: string
+  listMessage?: string,
+  databases?: Array<{ id: string; name: string }>
 ): Promise<{ success: boolean; message: string; data?: unknown }> {
   const { createNotionTask, updateNotionTask, deleteNotionTask } = await import("./notion-actions");
+
+  // Resolve targetDatabase name to actual database ID
+  const resolveDbId = (targetName?: string): string | undefined => {
+    if (!targetName || !databases || databases.length === 0) return databases?.[0]?.id;
+    const match = databases.find(db => db.name.toLowerCase() === targetName.toLowerCase());
+    return match?.id || databases[0]?.id;
+  };
 
   if (action === "CREATE") {
     const title = (data.title ?? "").trim() || "New Task";
     const status = normalizeStatus(data.status);
-    const result = await createNotionTask(title, status, data.date);
+    const targetDbId = resolveDbId(data.targetDatabase);
+    const result = await createNotionTask(title, status, data.date, targetDbId);
     return {
       success: result.success,
       message: result.success ? "Task created." : "Failed to create task.",
@@ -316,11 +326,12 @@ export async function performNotionCRUD(
     }
 
     const results = [];
+    const targetDbId = resolveDbId(data.targetDatabase);
     for (const task of data.plan) {
       const title = (task.title ?? "").trim() || "New Task";
       // Default to not started
       const status = normalizeStatus("Not started");
-      results.push(await createNotionTask(title, status, task.date));
+      results.push(await createNotionTask(title, status, task.date, targetDbId));
     }
 
     const allSuccess = results.every(r => r.success);
@@ -343,11 +354,24 @@ export async function performNotionCRUD(
     if (!data.taskId)
       return { success: false, message: "Missing taskId for UPDATE." };
 
+    // Resolve propNames for this specific task's database
+    let propNames: { status: string; date: string } | undefined;
+
+    // Check if we can find the task in the cache (passed from frontend suggest/read)
+    // We try to find the task by ID to get its specific property names
+    // This is optional since updateNotionTask has a fallback retrieval
+    const { fetchNotionTasks: fetchAll } = await import("./notion-actions");
+    const tasks = await fetchAll(databases as any);
+    const matchedTask = tasks.find(t => t.id === data.taskId);
+    if (matchedTask?.propNames) {
+      propNames = matchedTask.propNames;
+    }
+
     // Normalize status if it exists in the data
     const status = data.status ? normalizeStatus(data.status) : undefined;
 
     // Pass both status and date to the update function
-    const result = await updateNotionTask(data.taskId, status, data.date);
+    const result = await updateNotionTask(data.taskId, status, data.date, propNames);
 
     return {
       success: result.success,
@@ -390,9 +414,14 @@ export async function executeUserPrompt(prompt: string, userOffset: string = "+0
     };
   }
 
-  const tasks = await fetchNotionTasks();
-  const taskContext = tasks.map(t => `- Name: "${t.name}", ID: "${t.id}", Status: "${t.status || 'No Status'}", Deadline: "${t.deadline || 'No Deadline'}"`).join("\n");
-  const decision = await processUserPrompt(prompt, taskContext, userOffset);
+  const { discoverDatabases } = await import("./notion-actions");
+  const databases = await discoverDatabases();
+  const tasks = await fetchNotionTasks(databases);
+  const databaseNames = databases.map(db => db.name);
+
+  // Include database name in task context so the AI knows which DB each task belongs to
+  const taskContext = tasks.map(t => `- Name: "${t.name}", ID: "${t.id}", Status: "${t.status || 'No Status'}", Deadline: "${t.deadline || 'No Deadline'}"${t.databaseName ? `, Database: "${t.databaseName}"` : ""}`).join("\n");
+  const decision = await processUserPrompt(prompt, taskContext, userOffset, databaseNames);
   const { thinkContext, ...decisionData } = decision;
   const cleanDecision = decisionData as AgentResponse;
 
@@ -519,7 +548,7 @@ export async function executeUserPrompt(prompt: string, userOffset: string = "+0
   }
 
   // Pass to CRUD (READ/SUGGEST will return success without Notion changes)
-  const result = await performNotionCRUD(cleanDecision.action, cleanDecision.data, aiSuggestion, message);
+  const result = await performNotionCRUD(cleanDecision.action, cleanDecision.data, aiSuggestion, message, databases);
 
   return {
     success: result.success,
@@ -534,8 +563,10 @@ export async function executeUserPrompt(prompt: string, userOffset: string = "+0
 
 // Execute a confirmed CRUD action — called by the client after user approval
 export async function confirmAction(decision: AgentResponse) {
-  const result = await performNotionCRUD(decision.action, decision.data);
-  const returnTasks = result.success ? await fetchNotionTasks() : undefined;
+  const { discoverDatabases: discoverDbs } = await import("./notion-actions");
+  const databases = await discoverDbs();
+  const result = await performNotionCRUD(decision.action, decision.data, null, undefined, databases);
+  const returnTasks = result.success ? await fetchNotionTasks(databases) : undefined;
   return {
     success: result.success,
     message: result.message,

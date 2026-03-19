@@ -84,13 +84,7 @@ Create a `.env.local` file in the root of the project:
 ```env
 GROQ_API_KEY=your_groq_api_key_here
 NOTION_TOKEN=your_notion_integration_token_here
-NOTION_DATABASE_ID=your_notion_database_id_here
 ```
-
-> **How to get your Notion Database ID:**
-> Open your Notion database in the browser. The URL looks like:
-> `https://www.notion.so/yourworkspace/{DATABASE_ID}?v=...`
-> Copy the `DATABASE_ID` part (the 32-character string before `?v=`).
 
 ### 4. Configure your Notion Database
 

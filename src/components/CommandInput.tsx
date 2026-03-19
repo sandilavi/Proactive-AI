@@ -1,7 +1,7 @@
 "use client";
 import { useState, useTransition, useRef, useEffect, useCallback } from "react";
 import { executeUserPrompt, confirmAction, getAgentSuggestion, NotionTask, AgentSuggestion, AgentResponse } from "@/app/actions/agent-actions";
-import { fetchNotionTasks } from "@/app/actions/notion-actions";
+import { fetchNotionTasks, NotionDatabase } from "@/app/actions/notion-actions";
 import { Info, X, List, Zap, Trash2, Calendar, CheckCircle2, AlertTriangle, Check, Bell, BellRing, Clock } from "lucide-react";
 
 // Proactive Notification Timer
@@ -24,24 +24,27 @@ interface ProactiveAlert {
 // Function To Classify Deadlines
 function classifyDeadline(deadline: string): ProactiveAlert["urgency"] | null {
   if (!deadline || deadline === "No Deadline") return null;
-  
+
   const now = new Date();
   const deadlineDate = new Date(deadline);
-  
-  // 1. Strict Overdue Check (including time if present)
-  if (deadlineDate < now) return "OVERDUE";
+  const hasTime = deadline.includes("T");
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
-  const soon = new Date(today); soon.setDate(today.getDate() + 3);
-  
-  const deadlineDay = new Date(deadline); deadlineDay.setHours(0, 0, 0, 0);
-  
+  const deadlineDay = new Date(deadlineDate); deadlineDay.setHours(0, 0, 0, 0);
+
   if (isNaN(deadlineDay.getTime())) return null;
-  if (deadlineDay.getTime() === today.getTime())       return "TODAY";
-  if (deadlineDay.getTime() === tomorrow.getTime())    return "TOMORROW";
-  if (deadlineDay.getTime() <= soon.getTime())         return "SOON";
-  return null;
+
+  const diffDays = Math.round((deadlineDay.getTime() - today.getTime()) / 86400000);
+
+  if (diffDays < 0) return "OVERDUE";              // Past calendar day → always overdue
+  if (diffDays === 0) {
+    // Due today: only mark OVERDUE if it has a specific time AND that time has passed
+    if (hasTime && deadlineDate < now) return "OVERDUE";
+    return "TODAY";                                // Still pending today (or date-only)
+  }
+  if (diffDays === 1) return "TOMORROW";           // Due tomorrow → orange
+  if (diffDays >= 2 && diffDays <= 3) return "SOON"; // 2-3 days → blue
+  return null;                                     // Beyond 3 days → no notification
 }
 
 // Function To Format Deadlines
@@ -91,9 +94,11 @@ const SUGGESTIONS = [
 
 interface CommandInputProps {
   initialTasks?: NotionTask[];
+  databases?: NotionDatabase[];
 }
 
-export default function CommandInput({ initialTasks }: CommandInputProps) {
+export default function CommandInput({ initialTasks, databases = [] }: CommandInputProps) {
+  const databaseCount = databases.length;
   const [prompt, setPrompt] = useState("");
   const [showHelp, setShowHelp] = useState(false);
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
@@ -118,10 +123,14 @@ export default function CommandInput({ initialTasks }: CommandInputProps) {
       const lastFingerprint = localStorage.getItem("proactive_task_fingerprint");
       const cacheTime = SUGGESTION_CACHE_TIME;
       
-      // Create a fingerprint of current tasks (ID + Status + Name + Deadline)
+      // Create a fingerprint of current tasks (ID + Status + Name + Deadline + Date)
       const currentFingerprint = (taskList || initialTasks || []).map(t => `${t.id}-${t.name}-${t.status}-${t.deadline}`).join("|");
 
-      const isCacheValid = cached && lastFetch && (Date.now() - parseInt(lastFetch) < cacheTime);
+      const todayStr = new Date().toISOString().split('T')[0];
+      const lastFetchDay = localStorage.getItem("proactive_last_fetch_day");
+      const isSameDay = lastFetchDay === todayStr;
+
+      const isCacheValid = cached && lastFetch && isSameDay && (Date.now() - parseInt(lastFetch) < cacheTime);
       const isTaskListSame = lastFingerprint === currentFingerprint;
 
       if (isCacheValid && isTaskListSame) {
@@ -152,7 +161,7 @@ export default function CommandInput({ initialTasks }: CommandInputProps) {
           if (cached) {
             try {
               const old = JSON.parse(cached);
-              const isSameTask = old && old.suggestion === newSuggestion.suggestion && old.priority === newSuggestion.priority;
+              const isSameTask = old && old.suggestion === newSuggestion.suggestion && old.priority === newSuggestion.priority && isSameDay;
               
               if (isSameTask) {
                 const confDiff = Math.abs((old.confidence || 0) - (newSuggestion.confidence || 0));
@@ -178,6 +187,7 @@ export default function CommandInput({ initialTasks }: CommandInputProps) {
           setSuggestion(finalSuggestion);
           localStorage.setItem("proactive_auto_suggestion", JSON.stringify(finalSuggestion));
           localStorage.setItem("proactive_last_fetch", Date.now().toString());
+          localStorage.setItem("proactive_last_fetch_day", todayStr);
           localStorage.setItem("proactive_task_fingerprint", currentFingerprint);
         }
       } catch (err) {
@@ -230,8 +240,8 @@ export default function CommandInput({ initialTasks }: CommandInputProps) {
     const urgencyLabel: Record<ProactiveAlert["urgency"], string> = {
       OVERDUE:  "🚨 OVERDUE",
       TODAY:    "⚠️ Due TODAY",
-      TOMORROW: "🔔 Due TOMORROW",
-      SOON:     "📅 Due Soon",
+      TOMORROW: "⚠️ Due TOMORROW",
+      SOON:     "🔔 Due Soon",
     };
     const body = `"${alert.taskName}" — ${urgencyLabel[alert.urgency]}`;
     if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
@@ -463,10 +473,10 @@ export default function CommandInput({ initialTasks }: CommandInputProps) {
        {/* In-App Proactive Panel (List of Toasts) */}
        {showNotificationPanel && activeToasts.length > 0 && (() => {
          const urgencyStyles: Record<ProactiveAlert["urgency"], { border: string; headerBg: string; cardBg: string; iconColor: string; label: string }> = {
-           OVERDUE:  { border: "border-red-300",    headerBg: "bg-red-50 border-red-200",    cardBg: "bg-red-50/40",    iconColor: "text-red-500",    label: "🚨 OVERDUE" },
+           OVERDUE:  { border: "border-red-300",    headerBg: "bg-red-50 border-red-200",       cardBg: "bg-red-50/40",    iconColor: "text-red-500",    label: "🚨 OVERDUE" },
            TODAY:    { border: "border-orange-300", headerBg: "bg-orange-50 border-orange-200", cardBg: "bg-orange-50/40", iconColor: "text-orange-500", label: "⚠️ Due TODAY" },
-           TOMORROW: { border: "border-blue-300",   headerBg: "bg-blue-50 border-blue-200",   cardBg: "bg-blue-50/40",   iconColor: "text-blue-500",   label: "🔔 Due TOMORROW" },
-           SOON:     { border: "border-gray-300",   headerBg: "bg-gray-100 border-gray-300",   cardBg: "bg-gray-50/60",   iconColor: "text-gray-500",   label: "📅 Due Soon" },
+           TOMORROW: { border: "border-orange-300", headerBg: "bg-orange-50 border-orange-200", cardBg: "bg-orange-50/40", iconColor: "text-orange-500", label: "⚠️ Due TOMORROW" },
+           SOON:     { border: "border-blue-300",   headerBg: "bg-blue-50 border-blue-200",     cardBg: "bg-blue-50/40",   iconColor: "text-blue-500",   label: "🔔 Due Soon" },
          };
          return (
            <div className="flex flex-col gap-2 mb-4 animate-in slide-in-from-bottom-2 duration-200">
@@ -564,8 +574,27 @@ export default function CommandInput({ initialTasks }: CommandInputProps) {
        </div>
 
        {/* Main Chat Card */}
-       <div className="bg-white/80 backdrop-blur-md border border-white shadow-xl rounded-2xl overflow-hidden relative z-10">
-         <div className="p-6">
+       <div className="bg-white/80 backdrop-blur-md border border-white shadow-xl rounded-2xl overflow-hidden relative z-10 flex flex-col">
+         {/* Header with Source Badges */}
+         <div className="bg-slate-50/50 p-6 pb-2 border-b border-slate-100 flex flex-col gap-3">
+           <div className="flex flex-wrap gap-2 mb-2">
+             <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest self-center mr-1">Active Sources:</span>
+             {databases.map(db => (
+               <div key={db.id} className="flex items-center gap-1.5 bg-white border border-slate-200 px-2.5 py-1 rounded-full text-[10px] font-bold text-slate-500 uppercase tracking-widest shadow-sm">
+                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></div>
+                 {db.name}
+               </div>
+             ))}
+             {databases.length === 0 && (
+               <div className="flex items-center gap-1.5 bg-red-50 border border-red-100 px-2.5 py-1 rounded-full text-[10px] font-bold text-red-400 uppercase tracking-widest">
+                 <AlertTriangle size={10} />
+                 No databases found
+               </div>
+             )}
+           </div>
+         </div>
+
+         <div className="p-6 pt-4">
            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
              <div className="relative">
                <input ref={inputRef} type="text" value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Ask me to..." className="w-full p-4 pr-12 rounded-xl border border-slate-200 outline-none transition-all" disabled={isLoading} />
@@ -695,7 +724,7 @@ export default function CommandInput({ initialTasks }: CommandInputProps) {
                 <div className={`mt-5 rounded-xl border overflow-hidden ${pc.border}`}>
                   <div className={`px-5 py-2.5 flex items-center gap-2 border-b ${pc.headerBg}`}>
                     <Zap size={13} className={pc.iconColor} />
-                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Proactive Suggestion</span>
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Agent Suggestion</span>
                     <span className={`ml-auto inline-block text-[10px] font-bold px-2 py-0.5 rounded-full ${pc.badge}`}>{suggestion.priority}</span>
                   </div>
                   <div className={`px-5 py-4 ${pc.cardBg}`}>
@@ -746,34 +775,42 @@ export default function CommandInput({ initialTasks }: CommandInputProps) {
                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Your Notion Tasks : {taskList.length}</p>
                  </div>
                  <div className="overflow-x-auto">
-                   <table className="w-full text-sm">
-                     <thead>
-                       <tr className="border-b border-slate-100 bg-slate-50/50">
-                         <th className="text-left px-5 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide w-1/2">Task</th>
-                         <th className="text-left px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Status</th>
-                         <th className="text-left px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Date</th>
-                       </tr>
-                     </thead>
-                     <tbody>
-                       {taskList.map((task, i) => (
-                         <tr key={task.id} className={`${i % 2 === 0 ? "bg-white" : "bg-slate-50/30"} border-b border-slate-50 last:border-0`}>
-                           <td className="px-5 py-3 font-medium text-slate-700">{task.name}</td>
-                           <td className="px-4 py-3">
-                             <span className={statusBadge(task.status ?? "")}>{task.status ?? "â€”"}</span>
-                           </td>
-                           <td className="px-4 py-3 text-slate-500 text-xs tabular-nums">{formatDeadline(task.deadline ?? "")}</td>
-                         </tr>
-                       ))}
-                     </tbody>
-                   </table>
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-100 bg-slate-50/50">
+                          <th className="text-left px-5 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide w-1/2">Task</th>
+                          <th className="text-left px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Status</th>
+                          <th className="text-left px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Date</th>
+                          {databaseCount > 1 && <th className="text-left px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Source</th>}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {taskList.map((task, i) => (
+                          <tr key={task.id} className={`${i % 2 === 0 ? "bg-white" : "bg-slate-50/30"} border-b border-slate-50 last:border-0`}>
+                            <td className="px-5 py-3 font-medium text-slate-700">{task.name}</td>
+                            <td className="px-4 py-3">
+                              <span className={statusBadge(task.status ?? "")}>{task.status ?? "\u2013"}</span>
+                            </td>
+                            <td className="px-4 py-3 text-slate-500 text-xs tabular-nums">{formatDeadline(task.deadline ?? "")}</td>
+                            {databaseCount > 1 && (
+                              <td className="px-4 py-3">
+                                <span className="text-[10px] font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full whitespace-nowrap">
+                                  {task.databaseName || "Unknown"}
+                                </span>
+                              </td>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                  </div>
                </div>
              )}
          </div>
-         <div className="bg-slate-50/50 p-4 border-t border-slate-100 flex justify-between text-[10px] text-slate-400">
-           <span>Notion Connected</span>
-           <span>Powered by Qwen 3</span>
-         </div>
+          <div className="bg-slate-50/50 p-4 border-t border-slate-100 flex justify-between text-[10px] text-slate-400">
+            <span>{databaseCount} Notion {databaseCount === 1 ? 'Database' : 'Databases'} Connected</span>
+            <span>Powered by Qwen 3</span>
+          </div>
        </div>
     </div>
   );
