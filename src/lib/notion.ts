@@ -12,7 +12,10 @@ export interface NotionDatabase {
         title: string;
         status: string;
         date: string;
-    }
+    };
+    propTypes: {
+        status: "status" | "select";
+    };
 }
 
 // Discover all databases shared with the integration that have the required types (title, status, date)
@@ -43,7 +46,7 @@ export async function discoverDatabases(): Promise<NotionDatabase[]> {
             dbName = "Untitled " + (type === "database" ? "Database" : "Data Source");
         }
 
-        console.log(`[Discovery] Found ${type}: "${dbName}" (${id})`);
+        // console.log(`[Discovery] Found ${type}: "${dbName}" (${id})`);
 
         if (type === "data_source" || type === "database") {
             try {
@@ -54,34 +57,35 @@ export async function discoverDatabases(): Promise<NotionDatabase[]> {
                 const props = fullObj.properties || {};
                 let titleName = "";
                 let statusName = "";
+                let statusType: "status" | "select" = "status";
                 let dateName = "";
 
-                // Log properties to help debug why a DB might be skipped
                 const propTypes = Object.entries(props).map(([n, p]: [string, any]) => `${n}:${p.type}`);
-                console.log(`[Discovery]   Props: ${propTypes.join(", ")}`);
 
                 for (const [name, prop] of Object.entries(props)) {
                     const p = prop as any;
                     if (p.type === "title") titleName = name;
                     // Broad mapping: allow 'status' or 'select' for the status logic
-                    if (p.type === "status" || p.type === "select") statusName = name;
+                    if (p.type === "status" || p.type === "select") {
+                        statusName = name;
+                        statusType = p.type as "status" | "select";
+                    }
                     if (p.type === "date") dateName = name;
                 }
 
                 if (titleName && statusName && dateName) {
-                    console.log(`[Discovery]   ✅ Schema Valid. Adding to system.`);
                     validDatabases.push({
                         id,
                         name: dbName,
                         dataSourceId: type === "data_source" ? id : undefined,
-                        propNames: { title: titleName, status: statusName, date: dateName }
+                        propNames: { title: titleName, status: statusName, date: dateName },
+                        propTypes: { status: statusType }
                     });
                 } else {
                     const missing = [];
                     if (!titleName) missing.push("Title property");
                     if (!statusName) missing.push("Status/Select property");
                     if (!dateName) missing.push("Date property");
-                    console.log(`[Discovery]   ❌ Skipping: Missing [${missing.join(", ")}]`);
                 }
             } catch (err) {
                 console.error(`[Discovery]   ❌ Error retrieving details for ${dbName}:`, err);

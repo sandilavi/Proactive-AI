@@ -10,6 +10,7 @@ export interface NotionTask {
   databaseId?: string;
   databaseName?: string;
   propNames?: { title: string; status: string; date: string };
+  propTypes?: { status: "status" | "select" };
 }
 
 export interface AgentSuggestion {
@@ -356,6 +357,7 @@ export async function performNotionCRUD(
 
     // Resolve propNames for this specific task's database
     let propNames: { status: string; date: string } | undefined;
+    let propTypes: { status: "status" | "select" } | undefined;
 
     // Check if we can find the task in the cache (passed from frontend suggest/read)
     // We try to find the task by ID to get its specific property names
@@ -365,13 +367,14 @@ export async function performNotionCRUD(
     const matchedTask = tasks.find(t => t.id === data.taskId);
     if (matchedTask?.propNames) {
       propNames = matchedTask.propNames;
+      propTypes = matchedTask.propTypes;
     }
 
     // Normalize status if it exists in the data
     const status = data.status ? normalizeStatus(data.status) : undefined;
 
     // Pass both status and date to the update function
-    const result = await updateNotionTask(data.taskId, status, data.date, propNames);
+    const result = await updateNotionTask(data.taskId, status, data.date, propNames, propTypes);
 
     return {
       success: result.success,

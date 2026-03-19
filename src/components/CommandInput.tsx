@@ -176,7 +176,6 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                   };
                 } else {
                   // Major shift: Let the new suggestion flow through (FinalSuggestion is already newSuggestion)
-                  console.log(`[Proactive] Significant confidence shift (${Math.round(confDiff*100)}%). Updating reason.`);
                 }
               }
             } catch {
@@ -646,7 +645,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                     <div>
                       <p className="text-sm text-slate-700 mb-4">
                         {pendingDecision.action === "DELETE" && <>I&apos;m about to permanently delete <strong>&quot;{pendingTaskName}&quot;</strong>. This cannot be undone.</>}
-                        {pendingDecision.action === "UPDATE" && <>I&apos;m about to update <strong>&quot;{pendingTaskName}&quot;</strong>{pendingDecision.data.status && <> \u2192 Status: <strong>{pendingDecision.data.status}</strong></>}{pendingDecision.data.date && <> \u2192 Due: <strong>{formatDeadline(pendingDecision.data.date)}</strong></>}.</>}
+                        {pendingDecision.action === "UPDATE" && <>I&apos;m about to update <strong>&quot;{pendingTaskName}&quot;</strong>{pendingDecision.data.status && <> → Status: <strong>{pendingDecision.data.status}</strong></>}{pendingDecision.data.date && <> → Due: <strong>{formatDeadline(pendingDecision.data.date)}</strong></>}.</>}
                         {pendingDecision.action === "CREATE" && <>I&apos;m about to create: <strong>&quot;{pendingDecision.data.title}&quot;</strong>{pendingDecision.data.date && <> due <strong>{formatDeadline(pendingDecision.data.date)}</strong></>}.</>}
                         {pendingDecision.action === "PLAN" && <>I&apos;m about to create a roadmap plan with <strong>{pendingDecision.data.plan?.length || 0} tasks</strong>:</>}
                       </p>

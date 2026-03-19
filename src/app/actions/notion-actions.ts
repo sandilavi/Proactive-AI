@@ -16,15 +16,23 @@ export type { NotionDatabase };
 export async function fetchTasksFromDatabase(db: NotionDatabase) {
   const rawTasks = (await getRawNotionTasks(db.id, db.dataSourceId)) as unknown as NotionPage[];
 
-  return rawTasks.map((page) => ({
-    id: page.id,
-    name: page.properties[db.propNames.title]?.title[0]?.plain_text || "Untitled Task",
-    status: page.properties[db.propNames.status]?.status?.name || "No Status",
-    deadline: page.properties[db.propNames.date]?.date?.start || "No Deadline",
-    databaseId: db.id,
-    databaseName: db.name,
-    propNames: db.propNames, // Save for CRUD modification
-  }));
+  return rawTasks.map((page) => {
+    const statusProp = page.properties[db.propNames.status];
+    const statusValue = db.propTypes.status === "status"
+      ? statusProp?.status?.name
+      : statusProp?.select?.name;
+
+    return {
+      id: page.id,
+      name: page.properties[db.propNames.title]?.title[0]?.plain_text || "Untitled Task",
+      status: statusValue || "No Status",
+      deadline: page.properties[db.propNames.date]?.date?.start || "No Deadline",
+      databaseId: db.id,
+      databaseName: db.name,
+      propNames: db.propNames, // Save for CRUD modification
+      propTypes: db.propTypes,
+    };
+  });
 }
 
 // Fetch tasks from ALL discovered databases (merged + sorted)
@@ -74,15 +82,19 @@ export async function createNotionTask(title: string, statusName: string, date?:
   }
 
   try {
+    const parent = targetDb.dataSourceId
+      ? { data_source_id: targetDb.dataSourceId }
+      : { database_id: targetDb.id };
+
     const response = await notion.pages.create({
-      parent: { database_id: targetDb.id },
+      parent: parent as any,
       properties: {
         [targetDb.propNames.title]: {
           title: [{ text: { content: title } }],
         },
         [targetDb.propNames.status]: {
-          status: { name: statusName },
-        },
+          [targetDb.propTypes.status]: { name: statusName },
+        } as any,
         ...(date && {
           [targetDb.propNames.date]: {
             date: { start: date },
@@ -92,20 +104,22 @@ export async function createNotionTask(title: string, statusName: string, date?:
     });
     revalidatePath("/");
     return { success: true, data: response };
-  } catch (error) {
-    console.error("Notion Create Error:", error);
-    return { success: false, error };
+  } catch (error: any) {
+    console.error("Notion Create Error Details:", JSON.stringify(error, null, 2));
+    const errorMessage = error?.body ? JSON.parse(error.body).message : error.message || "Unknown error";
+    return { success: false, error: errorMessage };
   }
 }
 
 // UPDATE a task
-export async function updateNotionTask(taskId: string, statusName?: string, date?: string, propNames?: { status: string; date: string }) {
+export async function updateNotionTask(taskId: string, statusName?: string, date?: string, propNames?: { status: string; date: string }, propTypes?: { status: "status" | "select" }) {
   try {
     // If we don't know the prop names, we have to fetch them for this page's database
     let statusProp = propNames?.status || "Status";
     let dateProp = propNames?.date || "Date";
+    let statusType: "status" | "select" = propTypes?.status || "status";
 
-    if (!propNames) {
+    if (!propNames || !propTypes) {
       // Find database ID first by retrieving the page
       const page: any = await notion.pages.retrieve({ page_id: taskId });
       const dbId = page.parent?.database_id;
@@ -115,6 +129,7 @@ export async function updateNotionTask(taskId: string, statusName?: string, date
         if (db) {
           statusProp = db.propNames.status;
           dateProp = db.propNames.date;
+          statusType = db.propTypes.status;
         }
       }
     }
@@ -124,8 +139,8 @@ export async function updateNotionTask(taskId: string, statusName?: string, date
       properties: {
         ...(statusName && {
           [statusProp]: {
-            status: { name: statusName },
-          },
+            [statusType]: { name: statusName },
+          } as any,
         }),
         ...(date && {
           [dateProp]: {
