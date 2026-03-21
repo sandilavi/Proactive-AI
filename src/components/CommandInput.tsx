@@ -2,15 +2,11 @@
 import { useState, useTransition, useRef, useEffect, useCallback } from "react";
 import { executeUserPrompt, confirmAction, getAgentSuggestion, NotionTask, AgentSuggestion, AgentResponse } from "@/app/actions/agent-actions";
 import { fetchNotionTasks, NotionDatabase } from "@/app/actions/notion-actions";
-import { Info, X, List, Zap, Trash2, Calendar, CheckCircle2, AlertTriangle, Check, Bell, BellRing, Clock } from "lucide-react";
+ import { X, List, Zap, Trash2, Calendar, CheckCircle2, AlertTriangle, Check, Bell, BellRing, Clock, Brain, Sparkles } from "lucide-react";
 
 // Proactive Notification Timer
 const NOTIFICATION_INTERVAL    = 5  * 60 * 1000; // 5 minutes
-const TASK_SYNC_INTERVAL       = 2  * 60 * 1000; // 2 minutes
-
-// Proactive AI Suggestion Timer
-const SUGGESTION_CACHE_TIME       = 30 * 60 * 1000; // 30 minutes (cache validity)
-const SUGGESTION_REFRESH_INTERVAL = 30 * 60 * 1000 + 1000; // 30min + 1s (auto-refresh, always arrives after cache expires)
+const TASK_SYNC_INTERVAL       = 5  * 60 * 1000; // 5 minutes
 
 interface ProactiveAlert {
   id: string;
@@ -18,7 +14,8 @@ interface ProactiveAlert {
   taskName: string;
   urgency: "OVERDUE" | "TODAY" | "TOMORROW" | "SOON";
   deadline: string;
-  timestamp: string;
+  timestamp: string; // The original pre-formatted time string (e.g. "11:45 PM")
+  alertedAt?: number; // Raw milliseconds when this was first established
 }
 
 // Function To Classify Deadlines
@@ -67,11 +64,18 @@ function formatDeadline(dateStr: string): string {
 }
 
 function statusBadge(status: string) {
-  const base = "inline-block px-2 py-0.5 rounded-full text-[11px] font-semibold";
+  const label = status || "Pending";
   const s = status.toLowerCase();
-  if (s === "done") return `${base} bg-green-100 text-green-700`;
-  if (s === "in progress") return `${base} bg-blue-100 text-blue-700`;
-  return `${base} bg-slate-100 text-slate-500`;
+  const base = "inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest whitespace-nowrap shadow-sm border";
+  
+  if (s === "done") {
+    return <span className={`${base} bg-emerald-50 text-emerald-600 border-emerald-100`}>{label}</span>;
+  }
+  if (s === "in progress") {
+    return <span className={`${base} bg-blue-50 text-blue-600 border-blue-100`}>{label}</span>;
+  }
+  
+  return <span className={`${base} bg-slate-50 text-slate-500 border-slate-200`}>{label}</span>;
 }
 
 function priorityConfig(priority: any) {
@@ -84,13 +88,29 @@ function priorityConfig(priority: any) {
   return                       { border: "border-gray-200", headerBg: "bg-gray-50 border-gray-100", cardBg: "bg-gray-50/40", badge: "bg-gray-100 text-gray-600", accent: "bg-gray-400", iconColor: "text-gray-400" };
 }
 
-const SUGGESTIONS = [
-  { icon: <List size={14} />, text: "List all my current tasks." },
-  { icon: <Zap size={14} />, text: "Which task should I prioritize next?" },
-  { icon: <Calendar size={14} />, text: "Add a task to submit thesis by tomorrow." },
-  { icon: <CheckCircle2 size={14} />, text: "Mark submit thesis as completed." },
-  { icon: <Trash2 size={14} />, text: "Delete the task submit thesis." },
-];
+
+const getFormattedAlertTime = (ms: number | undefined, timeString: string) => {
+  if (!ms) return timeString;
+  const now = new Date();
+  const alert = new Date(ms);
+  
+  const isSameDay = now.getFullYear() === alert.getFullYear() &&
+                  now.getMonth() === alert.getMonth() &&
+                  now.getDate() === alert.getDate();
+  
+  if (isSameDay) return timeString; // "Today" is implied, keep it clean
+  
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const isYesterday = yesterday.getFullYear() === alert.getFullYear() &&
+                    yesterday.getMonth() === alert.getMonth() &&
+                    yesterday.getDate() === alert.getDate();
+  
+  if (isYesterday) return `Yesterday, ${timeString}`;
+  
+  return `${alert.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${timeString}`;
+};
+
 
 interface CommandInputProps {
   initialTasks?: NotionTask[];
@@ -100,7 +120,6 @@ interface CommandInputProps {
 export default function CommandInput({ initialTasks, databases = [] }: CommandInputProps) {
   const databaseCount = databases.length;
   const [prompt, setPrompt] = useState("");
-  const [showHelp, setShowHelp] = useState(false);
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [message, setMessage] = useState("");
   const [taskList, setTaskList] = useState<NotionTask[] | null>(initialTasks ?? null);
@@ -121,23 +140,25 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
       const cached = localStorage.getItem("proactive_auto_suggestion");
       const lastFetch = localStorage.getItem("proactive_last_fetch");
       const lastFingerprint = localStorage.getItem("proactive_task_fingerprint");
-      const cacheTime = SUGGESTION_CACHE_TIME;
-      
-      // Create a fingerprint of current tasks (ID + Status + Name + Deadline + Date)
+      // Create a fingerprint of current tasks (ID + Status + Name + Deadline)
       const currentFingerprint = (taskList || initialTasks || []).map(t => `${t.id}-${t.name}-${t.status}-${t.deadline}`).join("|");
-
-      const todayStr = new Date().toISOString().split('T')[0];
-      const lastFetchDay = localStorage.getItem("proactive_last_fetch_day");
-      const isSameDay = lastFetchDay === todayStr;
-
-      const isCacheValid = cached && lastFetch && isSameDay && (Date.now() - parseInt(lastFetch) < cacheTime);
       const isTaskListSame = lastFingerprint === currentFingerprint;
 
-      if (isCacheValid && isTaskListSame) {
-        const parsed = JSON.parse(cached);
-        if (parsed && parsed.suggestion && typeof parsed.confidence === "number" && parsed.priority) {
-          setSuggestion(parsed);
-          return;
+      const todayStr = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
+      const lastFetchDay = localStorage.getItem("proactive_last_fetch_day");
+      const isSameDay = lastFetchDay === todayStr;
+      
+      // CRITICAL: We only re-fetch if tasks changed OR it's a new day (past midnight).
+      // If tasks are identical and it's the same day, we persist the suggestion indefinitely.
+      if (cached && isTaskListSame && isSameDay) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (parsed && parsed.suggestion && typeof parsed.confidence === "number" && parsed.priority) {
+            setSuggestion(parsed);
+            return;
+          }
+        } catch {
+          // If parse fails, we continue to fetch a fresh one
         }
       }
 
@@ -195,13 +216,6 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
     };
 
     fetchLocalSuggestion();
-    
-    // Auto-refresh interval: runs slightly after cache expiry to guarantee a fresh fetch.
-    const interval = setInterval(() => {
-      fetchLocalSuggestion();
-    }, SUGGESTION_REFRESH_INTERVAL);
-
-    return () => clearInterval(interval);
   }, [taskList, initialTasks]);
   const [pendingDecision, setPendingDecision] = useState<AgentResponse | null>(null);
   const [pendingTaskName, setPendingTaskName] = useState("");
@@ -252,57 +266,94 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
   useEffect(() => {
     const urgencyRank: Record<ProactiveAlert["urgency"], number> = { OVERDUE: 0, TODAY: 1, TOMORROW: 2, SOON: 3 };
 
-    const syncNotifications = async () => { // Function to sync notifications after certain period of time
+    const syncNotifications = async () => {
       try {
         const tasks = await fetchNotionTasks();
-        const activeTasks = tasks.filter(t => t.status?.toLowerCase() !== "done"); // activeTasks = All the tasks that haven't completed yet
+        const activeTasks = tasks.filter(t => t.status?.toLowerCase() !== "done"); 
 
-        // Collect all urgent alerts in this check
+        const urgencyRank: Record<ProactiveAlert["urgency"], number> = { OVERDUE: 0, TODAY: 1, TOMORROW: 2, SOON: 3 };
+        const prevToasts = activeToastsRef.current;
         const urgentAlerts: ProactiveAlert[] = [];
         const nowString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         
+        let newUnreadCount = 0;
+
         for (const task of activeTasks) {
           const urgency = classifyDeadline(task.deadline ?? "");
           if (!urgency) continue;
 
-          // If user already dismissed this specific urgency state for this task, don't ping them again
           const mutedKey = `proactive_muted_${task.id}_${urgency}`;
           if (typeof window !== "undefined" && localStorage.getItem(mutedKey)) continue;
 
+          // Find if this task ALREADY has a notification in ANY state (to check for progression)
+          const existingAlert = prevToasts.find(t => t.taskId === task.id);
+          const alertedKey = `proactive_alerted_${task.id}_${urgency}`;
+          
+          let alertTimestamp = nowString;
+          let alertedMs = Date.now();
+          let isFreshAlert = true;
+
+          // Case 1: Task is already in the Notification Panel (in some state)
+          if (existingAlert) {
+            const oldRank = urgencyRank[existingAlert.urgency];
+            const newRank = urgencyRank[urgency];
+
+            // If it became MORE urgent (e.g. Tomorrow -> Today), it's a "Fresh Alert"
+            if (newRank < oldRank) {
+              isFreshAlert = true; // New timestamp, increment unread
+            } else {
+              // Same or Less urgent: Keep original timestamp and don't notify
+              alertTimestamp = existingAlert.timestamp;
+              alertedMs = existingAlert.alertedAt || Date.now();
+              isFreshAlert = false;
+            }
+          } 
+          // Case 2: Not in current panel, but check localStorage (persisted from previous session)
+          else if (typeof window !== "undefined") {
+            const cached = localStorage.getItem(alertedKey);
+            if (cached && cached.startsWith('{')) {
+              try {
+                const parsed = JSON.parse(cached);
+                alertTimestamp = parsed.displayTime || nowString;
+                alertedMs = parsed.alertedAt || Date.now();
+                isFreshAlert = false;
+              } catch {}
+            }
+          }
+
+          if (isFreshAlert) {
+             // Check if we already "Fresh Alerted" this specific ID/Urgency in this session to avoid double-pings
+             const alreadyFreshInSession = prevToasts.some(t => t.taskId === task.id && t.urgency === urgency);
+             if (!alreadyFreshInSession) {
+               newUnreadCount++;
+               // Mark as alerted in storage
+               if (typeof window !== "undefined") {
+                 localStorage.setItem(alertedKey, JSON.stringify({ alertedAt: alertedMs, displayTime: alertTimestamp }));
+               }
+             }
+          }
+
           urgentAlerts.push({ 
-            id: `${task.id}-${Date.now()}`, 
+            id: `${task.id}-${urgency}-${alertedMs}`, // Include urgency in ID to force list refresh if state changes
             taskId: task.id, 
             taskName: task.name, 
             urgency, 
             deadline: task.deadline ?? "", 
-            timestamp: nowString 
+            timestamp: alertTimestamp,
+            alertedAt: alertedMs 
           });
         }
 
-        if (urgentAlerts.length === 0) return;
-
-        // Fire OS notification for every urgent task
-        // urgentAlerts.forEach(alert => fireOsNotification(alert));
-
-        // Safely check how many items are TRULY new against what's currently in the list
-        const prevToasts = activeToastsRef.current;
-        const newlyFoundCount = urgentAlerts.filter(
-          ua => !prevToasts.some(t => t.taskId === ua.taskId && t.urgency === ua.urgency)
-        ).length;
-
-        if (newlyFoundCount > 0) {
-          setUnreadCount(prev => prev + newlyFoundCount);
+        if (newUnreadCount > 0) {
+          setUnreadCount(prev => prev + newUnreadCount);
         }
 
-        // Merge keeping timestamps of existing items
-        const mergedToasts = urgentAlerts.map(newAlert => {
-          const existing = prevToasts.find(t => t.taskId === newAlert.taskId && t.urgency === newAlert.urgency);
-          return existing ? existing : newAlert;
-        });
+        // Final sort: Newest on top
+        const sorted = [...urgentAlerts].sort((a, b) => (b.alertedAt || 0) - (a.alertedAt || 0));
+        setActiveToasts(sorted);
 
-        setActiveToasts(mergedToasts.sort((a, b) => urgencyRank[a.urgency] - urgencyRank[b.urgency]));
-      } catch {
-        // Silently fail - don't disrupt the user's workflow on a background check error
+      } catch (err) {
+        console.error("SyncNotifications Error:", err);
       }
     };
 
@@ -310,6 +361,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
     const intervalId = setInterval(syncNotifications, NOTIFICATION_INTERVAL);
     return () => clearInterval(intervalId); // cleanup on unmount
   }, [fireOsNotification]);
+
 
   // Background task sync - silently re-fetch Notion tasks every 60 seconds
   // Only updates the task table when it is currently visible (taskList !== null)
@@ -333,17 +385,11 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingDecision]);
 
-  const handleSuggestionClick = (text: string) => {
-    setPrompt(text);
-    setShowHelp(false);
-    setTimeout(() => inputRef.current?.focus(), 0);
-  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!prompt.trim() || status === "loading") return;
     setStatus("loading");
-    setTaskList(null);
     setMessage("");
     setSuggestion(null);
     setThinkContext("");
@@ -429,6 +475,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
        {/* Top Button Row: Bell + Help */}
        <div className="flex justify-end items-center gap-2 mb-4 pr-2 md:pr-4">
 
+
          {/* Notification Bell */}
           <button
             onClick={() => {
@@ -441,65 +488,99 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
               }
               setShowNotificationPanel(!showNotificationPanel);
             }}
-            className={`relative p-2 rounded-full shadow-md transition-all border border-slate-200 cursor-pointer ${
+            className={`relative p-3.5 rounded-[1.25rem] transition-all duration-300 border cursor-pointer group hover:scale-105 z-20 ${
               showNotificationPanel && activeToasts.length > 0
-                ? "bg-blue-50 text-blue-600 border-blue-200 ring-2 ring-blue-100" 
-                : "bg-white text-slate-500 hover:bg-blue-50"
+                ? "bg-blue-600 text-white border-blue-600 shadow-xl shadow-blue-200/50 ring-4 ring-blue-50" 
+                : "bg-white text-slate-400 border-slate-200/60 hover:border-slate-300 hover:text-slate-600 hover:shadow-md"
             }`}
             title={activeToasts.length === 0 ? "No Notifications" : "Notification alerts"}
           >
-            {activeToasts.length > 0 && unreadCount > 0 ? (
-              <BellRing size={20} className={showNotificationPanel ? "text-blue-600" : "text-red-500"} />
-            ) : (
-              <Bell size={20} className={showNotificationPanel && activeToasts.length > 0 ? "text-blue-600" : ""} />
+            {/* Background Glow when Unread */}
+            {!showNotificationPanel && unreadCount > 0 && (
+               <div className="absolute -inset-1 bg-rose-500/20 rounded-[1.5rem] blur-md animate-pulse"></div>
             )}
+            
+            <div className="relative z-10 flex items-center justify-center">
+               {activeToasts.length > 0 && unreadCount > 0 ? (
+                 <BellRing size={22} className={showNotificationPanel ? "text-white" : "text-rose-500"} />
+               ) : (
+                 <Bell size={22} className={showNotificationPanel && activeToasts.length > 0 ? "text-white" : ""} />
+               )}
+            </div>
+            
             {unreadCount > 0 && (
-              <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white ring-2 ring-white animate-in zoom-in">
+              <span className="absolute -top-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-[10px] font-black leading-none text-white ring-4 ring-white shadow-sm animate-in zoom-in group-hover:scale-110 transition-transform z-20">
                 {unreadCount}
               </span>
             )}
           </button>
+        </div>
 
-         {/* Help / Prompts */}
-         <button onClick={() => setShowHelp(!showHelp)}
-           className="p-2 bg-white rounded-full shadow-md hover:bg-blue-50 transition-all border border-slate-200 text-blue-600 cursor-pointer"
-           title="Show Suggestions"
-         >
-           {showHelp ? <X size={20} /> : <Info size={20} />}
-         </button>
-       </div>
-
-       {/* In-App Proactive Panel (List of Toasts) */}
+        {/* In-App Proactive Panel: Premium Alert System */}
        {showNotificationPanel && activeToasts.length > 0 && (() => {
-         const urgencyStyles: Record<ProactiveAlert["urgency"], { border: string; headerBg: string; cardBg: string; iconColor: string; label: string }> = {
-           OVERDUE:  { border: "border-red-300",    headerBg: "bg-red-50 border-red-200",       cardBg: "bg-red-50/40",    iconColor: "text-red-500",    label: "🚨 OVERDUE" },
-           TODAY:    { border: "border-orange-300", headerBg: "bg-orange-50 border-orange-200", cardBg: "bg-orange-50/40", iconColor: "text-orange-500", label: "⚠️ Due TODAY" },
-           TOMORROW: { border: "border-orange-300", headerBg: "bg-orange-50 border-orange-200", cardBg: "bg-orange-50/40", iconColor: "text-orange-500", label: "⚠️ Due TOMORROW" },
-           SOON:     { border: "border-blue-300",   headerBg: "bg-blue-50 border-blue-200",     cardBg: "bg-blue-50/40",   iconColor: "text-blue-500",   label: "🔔 Due Soon" },
+         const urgencyStyles: Record<ProactiveAlert["urgency"], { border: string; bg: string; iconColor: string; text: string; label: string; accent: string }> = {
+           OVERDUE:  { border: "border-rose-200/50 hover:border-rose-300 shadow-rose-100/50", bg: "bg-white/60 backdrop-blur-xl", iconColor: "text-rose-500", text: "text-rose-900", label: "Critical Overdue", accent: "bg-rose-500" },
+           TODAY:    { border: "border-orange-200/50 hover:border-orange-300 shadow-orange-100/50", bg: "bg-white/60 backdrop-blur-xl", iconColor: "text-orange-500", text: "text-orange-900", label: "Action Reqd Today", accent: "bg-orange-500" },
+           TOMORROW: { border: "border-amber-200/50 hover:border-amber-300 shadow-amber-100/50", bg: "bg-white/60 backdrop-blur-xl", iconColor: "text-amber-500", text: "text-amber-900", label: "Upcoming Tomorrow", accent: "bg-amber-500" },
+           SOON:     { border: "border-blue-200/50 hover:border-blue-300 shadow-blue-100/50", bg: "bg-white/60 backdrop-blur-xl", iconColor: "text-blue-500", text: "text-blue-900", label: "Future Horizon", accent: "bg-blue-500" },
          };
          return (
-           <div className="flex flex-col gap-2 mb-4 animate-in slide-in-from-bottom-2 duration-200">
-             <div className="flex items-center justify-between mb-1 px-1">
-               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Active Alerts ({activeToasts.length})</span>
+           <div className="flex flex-col gap-4 mb-8 animate-in slide-in-from-top-4 fade-in duration-700">
+             <div className="flex items-center justify-between mb-2 px-4 md:px-2">
+               <div className="flex items-center gap-3">
+                 <div className="w-8 h-[2px] bg-slate-300 rounded-full"></div>
+                 <span className="text-[11px] font-black text-slate-500 uppercase tracking-[0.3em]">System Intelligence Alerts ({activeToasts.length})</span>
+               </div>
                <button 
                  onClick={() => { 
                    activeToasts.forEach(t => localStorage.setItem(`proactive_muted_${t.taskId}_${t.urgency}`, "true"));
                    setShowNotificationPanel(false); 
                    setActiveToasts([]);
                  }}
-                 className="text-[10px] font-bold text-blue-500 hover:text-blue-700 cursor-pointer"
+                 className="text-[10px] font-black text-rose-500 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-5 py-2.5 rounded-[1rem] transition-all uppercase tracking-widest cursor-pointer shadow-sm border border-rose-100/50"
                >
-                 Mark all as read
+                 Clear All Intel
                </button>
              </div>
+             
+             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-5 pointer-events-auto">
                 {activeToasts.map(toast => {
                const s = urgencyStyles[toast.urgency];
                return (
-                 <div key={toast.id} className={`rounded-xl border shadow-sm overflow-hidden ${s.border}`}>
-                   <div className={`px-4 py-2 flex items-center gap-2 border-b ${s.headerBg}`}>
-                     <BellRing size={12} className={s.iconColor} />
-                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${s.iconColor}`}>{s.label}</span>
-                     <span className="text-[10px] font-bold text-slate-400 ml-auto mr-2">{toast.timestamp}</span>
+                 <div key={toast.id} className={`rounded-[2.5rem] border shadow-lg overflow-hidden relative group transition-all duration-500 hover:-translate-y-1 hover:shadow-xl ${s.border} ${s.bg}`}>
+                   {/* Top Accent Strip */}
+                   <div className={`absolute top-0 left-0 w-full h-1.5 opacity-80 z-20 ${s.accent}`}></div>
+                   
+                   {/* Decorative Icon Background */}
+                   <div className="absolute top-0 right-0 p-8 opacity-[0.03] group-hover:opacity-[0.08] transition-opacity pointer-events-none z-0">
+                     <BellRing size={120} className={s.iconColor} />
+                   </div>
+                   
+                   <div className="px-8 py-7 flex items-start gap-5 relative z-10 w-full overflow-hidden">
+                     {/* Icon Box */}
+                     <div className={`p-3.5 rounded-2xl bg-white shadow-sm border border-slate-100/50 flex-shrink-0 mt-1 ${s.iconColor} group-hover:scale-110 transition-transform duration-500`}>
+                       <BellRing size={22} className="fill-current/10" />
+                     </div>
+                     
+                     <div className="flex-1 min-w-0 pr-6 w-full">
+                       <div className="flex items-center justify-between mb-3 w-full">
+                         <span className={`text-[9px] font-black uppercase tracking-[0.25em] px-3.5 py-1.5 rounded-full bg-white shadow-sm border border-slate-100/50 flex-shrink-0 ${s.iconColor}`}>{s.label}</span>
+                         <span className="text-[10px] font-black text-slate-400 tabular-nums uppercase tracking-widest flex-shrink-0">{getFormattedAlertTime(toast.alertedAt, toast.timestamp)}</span>
+                       </div>
+                       
+                       <p className={`text-lg font-black tracking-tight leading-tight mb-4 line-clamp-2 w-full pr-2 ${s.text}`}>{toast.taskName}</p>
+                       
+                       <div className="flex items-center gap-2">
+                         <Clock size={12} className="text-slate-400 flex-shrink-0" />
+                         <span className="text-xs font-bold text-slate-500 uppercase tracking-widest leading-none pt-0.5 truncate w-full">
+                           {toast.deadline && toast.deadline !== "No Deadline"
+                             ? formatDeadline(toast.deadline)
+                             : "No deadline constraint"}
+                         </span>
+                       </div>
+                     </div>
+                     
+                     {/* Close Button */}
                      <button onClick={() => {
                         localStorage.setItem(`proactive_muted_${toast.taskId}_${toast.urgency}`, "true");
                         const next = activeToasts.filter(t => t.id !== toast.id);
@@ -507,132 +588,98 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                         if (next.length === 0) {
                           setShowNotificationPanel(false);
                         }
-                     }} className="text-slate-400 hover:text-slate-600 cursor-pointer"><X size={12} /></button>
-                   </div>
-                   <div className={`px-4 py-2.5 flex items-start gap-3 ${s.cardBg}`}>
-                     <Clock size={14} className={`mt-0.5 flex-shrink-0 ${s.iconColor}`} />
-                     <div>
-                       <p className="text-sm font-semibold text-slate-800">{toast.taskName}</p>
-                       <p className="text-[11px] text-slate-500 mt-0.5">
-                         {toast.deadline && toast.deadline !== "No Deadline"
-                           ? `Deadline: ${formatDeadline(toast.deadline)}`
-                           : "No deadline set"}
-                       </p>
-                     </div>
+                     }} className="absolute top-6 right-6 text-slate-300 hover:text-rose-500 hover:bg-rose-50/80 hover:shadow-sm border border-transparent hover:border-rose-100 p-2.5 rounded-full cursor-pointer transition-all z-20"><X size={16} strokeWidth={3} /></button>
                    </div>
                  </div>
                );
                 })}
               </div>
+            </div>
          );
        })()}
 
-       {/* Backdrop */}
-       {showHelp && (
-         <div
-           className="fixed inset-0 z-40"
-           onClick={() => setShowHelp(false)}
-         />
-       )}
-
-       {/* Right-side Suggestion Panel */}
-       <div
-         className={`fixed top-0 right-0 h-full w-72 z-50 bg-white border-l border-blue-100 shadow-2xl flex flex-col transition-transform duration-300 ease-in-out ${
-           showHelp ? "translate-x-0" : "translate-x-full"
-         }`}
-       >
-         {/* Panel Header */}
-         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-           <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Try these prompts</h3>
-           <button
-             onClick={() => setShowHelp(false)}
-             className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
-           >
-             <X size={16} />
-           </button>
-         </div>
-
-         {/* Prompt Buttons */}
-         <div className="flex flex-col gap-2 p-4 overflow-y-auto flex-1">
-           {SUGGESTIONS.map((item, i) => (
-             <button
-               key={i}
-               onClick={() => { handleSuggestionClick(item.text); setShowHelp(false); }}
-               className="text-left text-[13px] p-3 rounded-xl hover:bg-blue-500 hover:text-white transition-all border border-slate-100 hover:border-blue-400 flex items-center gap-3 font-medium text-slate-600 group cursor-pointer bg-slate-50/60"
-             >
-               <span className="text-blue-500 group-hover:text-white flex-shrink-0">{item.icon}</span>
-               {item.text}
-             </button>
-           ))}
-         </div>
-
-         {/* Panel Footer */}
-         <div className="px-5 py-3 border-t border-slate-100">
-           <p className="text-[10px] text-slate-400 text-center">Click any prompt to fill the input</p>
-         </div>
-       </div>
-
-       {/* Main Chat Card */}
-       <div className="bg-white/80 backdrop-blur-md border border-white shadow-xl rounded-2xl overflow-hidden relative z-10 flex flex-col">
-         {/* Header with Source Badges */}
-         <div className="bg-slate-50/50 p-6 pb-2 border-b border-slate-100 flex flex-col gap-3">
-           <div className="flex flex-wrap gap-2 mb-2">
-             <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest self-center mr-1">Active Sources:</span>
-             {databases.map(db => (
-               <div key={db.id} className="flex items-center gap-1.5 bg-white border border-slate-200 px-2.5 py-1 rounded-full text-[10px] font-bold text-slate-500 uppercase tracking-widest shadow-sm">
-                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></div>
-                 {db.name}
-               </div>
-             ))}
-             {databases.length === 0 && (
-               <div className="flex items-center gap-1.5 bg-red-50 border border-red-100 px-2.5 py-1 rounded-full text-[10px] font-bold text-red-400 uppercase tracking-widest">
-                 <AlertTriangle size={10} />
-                 No databases found
-               </div>
-             )}
-           </div>
-         </div>
-
-         <div className="p-6 pt-4">
-           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-             <div className="relative">
-               <input ref={inputRef} type="text" value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Ask me to..." className="w-full p-4 pr-12 rounded-xl border border-slate-200 outline-none transition-all" disabled={isLoading} />
-               <button type="submit" disabled={isLoading} className="absolute right-2 top-2 p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed">
-                 {isLoading ? <div className="animate-spin h-5 w-5 border-2 border-blue-600 border-t-transparent rounded-full" /> : <Zap size={20} />}
-               </button>
+         {/* Main Chat Card: Premium Glassmorphism */}
+         <div className="bg-white/80 backdrop-blur-2xl border border-white/40 shadow-[0_32px_80px_-15px_rgba(0,0,0,0.08)] rounded-[3rem] overflow-hidden relative z-10 flex flex-col transition-all duration-700 hover:shadow-[0_45px_100px_-20px_rgba(0,0,0,0.12)] border-b-white/20">
+           
+           {/* Header with Source Badges: Refined Capsules */}
+           <div className="px-10 py-8 pb-4 flex flex-col gap-6">
+             <div className="flex flex-wrap items-center gap-3">
+               <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.25em] self-center mr-2 opacity-60">Connected Sources</span>
+               {databases.map(db => (
+                 <div key={db.id} className="group relative flex items-center gap-2.5 bg-white/70 hover:bg-white border border-slate-100/80 px-4 py-2 rounded-full text-[10px] font-black text-slate-600 uppercase tracking-widest shadow-sm transition-all duration-300 cursor-default hover:scale-105 hover:border-blue-200">
+                   <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-50 group-hover:ring-blue-100 transition-all"></div>
+                   {db.name}
+                 </div>
+               ))}
+               {databases.length === 0 && (
+                 <div className="flex items-center gap-2 bg-red-50 border border-red-100 px-4 py-2 rounded-full text-[10px] font-black text-red-500 uppercase tracking-widest shadow-sm">
+                   <AlertTriangle size={12} className="animate-bounce" />
+                   No connection
+                 </div>
+               )}
              </div>
-           </form>
+           </div>
 
-             {/* Thinking + Response - unified card */}
+           <div className="px-10 py-8 pt-2">
+             <form onSubmit={handleSubmit} className="flex flex-col gap-6">
+               <div className="relative group/input">
+                 {/* Input Glow Effect */}
+                 <div className="absolute -inset-1 bg-gradient-to-r from-blue-500/0 via-blue-500/5 to-blue-500/0 rounded-[2rem] blur-xl opacity-0 group-focus-within/input:opacity-100 transition-opacity duration-700 pointer-events-none"></div>
+                 
+                 <input 
+                   ref={inputRef} 
+                   type="text" 
+                   value={prompt} 
+                   onChange={(e) => setPrompt(e.target.value)} 
+                   placeholder="Type a command or ask a question..." 
+                   className="relative w-full p-6 pr-16 rounded-[1.5rem] border border-slate-200/60 outline-none transition-all duration-500 focus:border-blue-500/30 focus:bg-white focus:ring-4 focus:ring-blue-500/5 bg-slate-50/50 text-slate-800 font-bold placeholder:text-slate-400 placeholder:font-medium text-lg leading-tight" 
+                   disabled={isLoading} 
+                 />
+                 <button 
+                   type="submit" 
+                   disabled={isLoading || !prompt.trim()} 
+                   className="absolute right-3 top-3 bottom-3 px-4 bg-blue-600 hover:bg-black text-white rounded-[1rem] transition-all duration-300 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed shadow-lg shadow-blue-200/50 hover:shadow-black/20 flex items-center justify-center min-w-[56px]"
+                 >
+                   {isLoading ? (
+                     <div className="animate-spin h-6 w-6 border-3 border-white border-t-transparent rounded-full" />
+                   ) : (
+                     <Zap size={22} className="fill-current" />
+                   )}
+                 </button>
+               </div>
+             </form>
+
+             {/* Thinking + Response - Premium unified card */}
              {(thinkContext || message || pendingDecision) && (
-               <div className={`mt-5 rounded-xl border px-5 py-4 ${
+               <div className={`mt-8 rounded-[2rem] border overflow-hidden animate-in fade-in zoom-in-95 duration-500 ${
                  pendingDecision?.action === "DELETE"
-                   ? "border-red-200 bg-red-50/40"
-                   : "border-blue-100 bg-blue-50/50"
+                   ? "border-red-100 bg-red-50/30"
+                   : "border-blue-100 bg-blue-50/30 shadow-inner"
                }`}>
 
                  {/* Show thinking toggle - first */}
                  {thinkContext && (
-                   <div className={(message || pendingDecision) ? "mb-4" : ""}>
+                   <div className={`px-6 pt-5 ${ (message || pendingDecision) ? "mb-4" : "pb-5" }`}>
                      <button
                        onClick={() => setThinkOpen((o) => !o)}
-                       className="flex items-center gap-1.5 text-[13px] text-slate-400 hover:text-slate-600 transition-colors cursor-pointer select-none"
+                       className="flex items-center gap-2 text-[11px] font-black text-slate-400 hover:text-blue-600 transition-all cursor-pointer select-none uppercase tracking-widest"
                      >
-                       <span>{thinkOpen ? "Hide Thinking" : "Show Thinking"}</span>
+                       <Brain size={12} className={thinkOpen ? "text-blue-500" : ""} />
+                       <span>{thinkOpen ? "Close Neural Process" : "View Neural Process"}</span>
                        <svg
                          viewBox="0 0 24 24"
                          fill="none"
                          stroke="currentColor"
-                         strokeWidth="2.5"
-                         className={`w-3 h-3 transition-transform duration-300 ${thinkOpen ? "rotate-180" : "rotate-0"}`}
+                         strokeWidth="3"
+                         className={`w-2.5 h-2.5 transition-transform duration-500 ${thinkOpen ? "rotate-180" : "rotate-0 text-slate-300"}`}
                        >
                          <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round"/>
                        </svg>
                      </button>
                      {/* Scrollable full think log - no cutoff */}
                      {thinkOpen && (
-                       <div className="mt-2 max-h-60 overflow-y-auto pl-3 border-l-2 border-slate-200">
-                         <p className="text-[12px] text-slate-400 italic leading-relaxed whitespace-pre-wrap font-mono">
+                       <div className="mt-4 max-h-64 overflow-y-auto pl-4 border-l-2 border-slate-200/50 scrollbar-hide">
+                         <p className="text-[12px] text-slate-500 italic leading-relaxed whitespace-pre-wrap font-mono opacity-80">
                            {thinkContext}
                          </p>
                        </div>
@@ -640,177 +687,309 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                    </div>
                  )}
 
-                 {/* Confirmation content - replaces message area during confirmation */}
-                 {pendingDecision ? (
-                    <div>
-                      <p className="text-sm text-slate-700 mb-4">
-                        {pendingDecision.action === "DELETE" && <>I&apos;m about to permanently delete <strong>&quot;{pendingTaskName}&quot;</strong>. This cannot be undone.</>}
-                        {pendingDecision.action === "UPDATE" && <>I&apos;m about to update <strong>&quot;{pendingTaskName}&quot;</strong>{pendingDecision.data.status && <> → Status: <strong>{pendingDecision.data.status}</strong></>}{pendingDecision.data.date && <> → Due: <strong>{formatDeadline(pendingDecision.data.date)}</strong></>}.</>}
-                        {pendingDecision.action === "CREATE" && <>I&apos;m about to create: <strong>&quot;{pendingDecision.data.title}&quot;</strong>{pendingDecision.data.date && <> due <strong>{formatDeadline(pendingDecision.data.date)}</strong></>}.</>}
-                        {pendingDecision.action === "PLAN" && <>I&apos;m about to create a roadmap plan with <strong>{pendingDecision.data.plan?.length || 0} tasks</strong>:</>}
-                      </p>
-
-                      {pendingDecision.action === "PLAN" && pendingDecision.data.planSummary && (
-                        <div className="mb-4 p-3 bg-blue-50 border border-blue-100 rounded-lg">
-                          <p className="text-xs text-blue-800 italic leading-relaxed">
-                            <span className="font-bold uppercase tracking-wider text-[10px] mr-2">Feasibility:</span>
-                            {pendingDecision.data.planSummary}
-                          </p>
+                 {/* Confirmation / Message Content Area */}
+                 <div className="px-8 pb-8 pt-2">
+                   {pendingDecision ? (
+                      <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+                        <div className="flex items-start gap-4 mb-6">
+                           <div className={`p-3 rounded-2xl flex-shrink-0 ${pendingDecision.action === "DELETE" ? "bg-red-100 text-red-600" : "bg-blue-100 text-blue-600"}`}>
+                              {pendingDecision.action === "DELETE" ? <Trash2 size={24} /> : <Zap size={24} />}
+                           </div>
+                           <div className="pt-1">
+                              <h3 className="text-lg font-black text-slate-800 tracking-tight leading-snug">
+                                {pendingDecision.action === "DELETE" && <>Confirm Deletion</>}
+                                {pendingDecision.action === "UPDATE" && <>Verify Task Update</>}
+                                {pendingDecision.action === "CREATE" && <>New Task Entry</>}
+                                {pendingDecision.action === "PLAN" && <>AI Blueprint Ready</>}
+                              </h3>
+                              <p className="text-sm font-medium text-slate-500 mt-1">
+                                {pendingDecision.action === "DELETE" && <>I&apos;m about to permanently remove <strong>&quot;{pendingTaskName}&quot;</strong> from your Notion.</>}
+                                {pendingDecision.action === "UPDATE" && <>Preparing to update <strong>&quot;{pendingTaskName}&quot;</strong> with new parameters.</>}
+                                {pendingDecision.action === "CREATE" && <>Generating a new record: <strong>&quot;{pendingDecision.data.title}&quot;</strong>.</>}
+                                {pendingDecision.action === "PLAN" && <>Reviewing the calculated roadmap with <strong>{pendingDecision.data.plan?.length || 0} tasks</strong>.</>}
+                              </p>
+                           </div>
                         </div>
-                      )}
 
-                      {pendingDecision.action === "PLAN" && pendingDecision.data.plan && (
-                        <div className="mb-4 max-h-60 overflow-y-auto pr-1">
-                          <ul className="space-y-3">
-                            {pendingDecision.data.plan.map((t, i) => (
-                              <li key={i} className="text-sm text-slate-700 bg-white/50 p-3 rounded-lg border border-slate-100 shadow-sm">
-                                <div className="font-semibold flex items-center justify-between">
-                                  <span>{t.title}</span>
-                                  {t.date && <span className="text-[11px] font-normal text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{formatDeadline(t.date)}</span>}
+                        {/* Plan Details Rendering */}
+                        {pendingDecision.action === "PLAN" && pendingDecision.data.plan && (
+                          <div className="mb-6 space-y-4">
+                            {pendingDecision.data.planSummary && (
+                              <div className="p-4 bg-white/60 border border-blue-100 rounded-2xl shadow-sm">
+                                <p className="text-xs text-blue-800 font-bold leading-relaxed flex items-center gap-2">
+                                  <Sparkles size={14} className="text-blue-500 shrink-0" />
+                                  {pendingDecision.data.planSummary}
+                                </p>
+                              </div>
+                            )}
+                            <div className="max-h-72 overflow-y-auto pr-2 space-y-3 scrollbar-hide">
+                              {pendingDecision.data.plan.map((t, i) => (
+                                <div key={i} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm hover:border-blue-200 transition-colors">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <span className="font-black text-slate-800 text-[13px] tracking-tight">{t.title}</span>
+                                    {t.date && <span className="text-[10px] font-black text-slate-400 bg-slate-50 px-2.5 py-1 rounded-full uppercase tracking-widest">{formatDeadline(t.date)}</span>}
+                                  </div>
+                                  {t.reason && <p className="text-[11px] font-medium text-slate-500 leading-relaxed">{t.reason}</p>}
                                 </div>
-                                {t.reason && <p className="text-xs text-slate-500 mt-1">{t.reason}</p>}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                     {/* Deadline conflict warning */}
-                     {deadlineConflict && conflictingTaskNames.length > 0 && (
-                       <div className="mb-4 flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5">
-                         <AlertTriangle size={14} className="text-amber-500 mt-0.5 shrink-0" />
-                         <p className="text-[12px] text-amber-700 leading-relaxed">
-                           <strong>Deadline conflict: </strong>
-                           {conflictingTaskNames.map((n, i) => (
-                             <span key={i}><strong>&quot;{n}&quot;</strong>{i < conflictingTaskNames.length - 1 ? ", " : ""}</span>
-                           ))}
-                           {conflictingTaskNames.length === 1 ? " already has" : " already have"} this deadline. You&apos;ll have multiple tasks due on the same day.
-                         </p>
-                       </div>
-                     )}
-                      {/* Duplicate task warning */}
-                      {duplicateTask && duplicateTaskName && (
-                        <div className="mb-4 flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5">
-                          <AlertTriangle size={14} className="text-amber-500 mt-0.5 shrink-0" />
-                          <p className="text-[12px] text-amber-700 leading-relaxed">
-                            <strong>Duplicate task: </strong>A task named <strong>&quot;{duplicateTaskName}&quot;</strong> already exists in your list. You&apos;ll have multiple tasks with the same name.
-                          </p>
-                        </div>
-                      )}
-                     <div className="flex gap-3">
-                       <button onClick={handleCancel} className="flex-1 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer font-medium">
-                         Cancel
-                       </button>
-                       <button onClick={handleConfirm} disabled={confirmLoading} className={`flex-1 py-2 rounded-xl text-sm font-semibold text-white transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2 ${pendingDecision.action === "DELETE" ? "bg-red-500 hover:bg-red-600" : "bg-blue-500 hover:bg-blue-600"}`}>
-                         {confirmLoading ? <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" /> : <><Check size={14} />{pendingDecision.action === "DELETE" ? "Yes, Delete" : "Confirm"}</>}
-                       </button>
-                     </div>
-                   </div>
-                 ) : (
-                   /* Regular response message */
-                   message ? (
-                     <div className="whitespace-pre-wrap text-sm text-slate-700">
-                       {message}
-                     </div>
-                   ) : null
-                 )}
-               </div>
-             )}
-
-            {/* Proactive Suggestion Card */}
-            {suggestion && !message && !pendingDecision && status === "idle" && (() => {
-              const pc = priorityConfig(suggestion.priority);
-              return (
-                <div className={`mt-5 rounded-xl border overflow-hidden ${pc.border}`}>
-                  <div className={`px-5 py-2.5 flex items-center gap-2 border-b ${pc.headerBg}`}>
-                    <Zap size={13} className={pc.iconColor} />
-                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Agent Suggestion</span>
-                    <span className={`ml-auto inline-block text-[10px] font-bold px-2 py-0.5 rounded-full ${pc.badge}`}>{suggestion.priority}</span>
-                  </div>
-                  <div className={`px-5 py-4 ${pc.cardBg}`}>
-                    <p className="font-bold text-slate-800 text-sm mb-1.5">📌 {suggestion.suggestion}</p>
-                    <p className="text-xs text-slate-500 leading-relaxed mb-3">{suggestion.reason}</p>
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 bg-white/70 rounded-full h-1.5 overflow-hidden">
-                        <div className={`h-full rounded-full ${pc.accent}`} style={{ width: `${Math.round(suggestion.confidence * 100)}%` }} />
-                      </div>
-                      <span className="text-[11px] text-slate-400 tabular-nums">{Math.round(suggestion.confidence * 100)}% confidence</span>
-                    </div>
-
-                    {/* Proactive Thinking */}
-                    {suggestion.thinkContext && (
-                      <div className="mt-4 pt-3 border-t border-slate-200/50">
-                        <button
-                          type="button"
-                          onClick={() => setProactiveThinkOpen(!proactiveThinkOpen)}
-                          className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-400 hover:text-slate-600 transition-colors cursor-pointer select-none mb-2"
-                        >
-                          <span>{proactiveThinkOpen ? "Hide Thinking" : "Show Thinking"}</span>
-                          <svg
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2.5"
-                            className={`w-2.5 h-2.5 transition-transform duration-300 ${proactiveThinkOpen ? "rotate-180" : "rotate-0"}`}
-                          >
-                            <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round"/>
-                          </svg>
-                        </button>
-                        {proactiveThinkOpen && (
-                          <div className="max-h-40 overflow-y-auto pl-3 border-l-2 border-slate-200">
-                            <p className="text-[11px] text-slate-400 italic leading-relaxed whitespace-pre-wrap font-mono">
-                              {suggestion.thinkContext}
-                            </p>
+                              ))}
+                            </div>
                           </div>
                         )}
+
+                        {/* General Action Details */}
+                        {pendingDecision.action !== "PLAN" && (
+                           <div className="mb-8 p-5 bg-white border border-slate-100 rounded-[1.5rem] shadow-sm flex flex-col gap-3">
+                              {pendingDecision.action === "UPDATE" && (
+                                <>
+                                  <div className="flex items-center justify-between">
+                                     <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Property</span>
+                                     <span className="text-[10px] font-black uppercase text-slate-600 tracking-widest">New Value</span>
+                                  </div>
+                                  {pendingDecision.data.status && (
+                                     <div className="flex items-center justify-between border-t border-slate-50 pt-2">
+                                        <span className="text-xs font-bold text-slate-500">Status</span>
+                                        {statusBadge(pendingDecision.data.status)}
+                                     </div>
+                                  )}
+                                  {pendingDecision.data.date && (
+                                     <div className="flex items-center justify-between border-t border-slate-50 pt-2">
+                                        <span className="text-xs font-bold text-slate-500">Deadline</span>
+                                        <span className="text-xs font-black text-slate-800">{formatDeadline(pendingDecision.data.date)}</span>
+                                     </div>
+                                  )}
+                                </>
+                              )}
+                              {pendingDecision.action === "CREATE" && (
+                                 <div className="flex flex-col gap-3">
+                                   <div className="flex items-center justify-between">
+                                      <span className="text-xs font-bold text-slate-500">Entry</span>
+                                      <span className="text-xs font-black text-slate-800 line-clamp-1">{pendingDecision.data.title}</span>
+                                   </div>
+                                   <div className="flex items-center justify-between border-t border-slate-50 pt-2">
+                                      <span className="text-xs font-bold text-slate-500">Initial Status</span>
+                                      {statusBadge(pendingDecision.data.status || "To Do")}
+                                   </div>
+                                    <div className="flex items-center justify-between border-t border-slate-50 pt-2">
+                                      <span className="text-xs font-bold text-slate-500">Scheduled Date</span>
+                                      <span className="text-xs font-black text-slate-800">{pendingDecision.data.date ? formatDeadline(pendingDecision.data.date) : "Immediate"}</span>
+                                   </div>
+                                 </div>
+                              )}
+                           </div>
+                        )}
+
+                       {/* Warnings Rendering */}
+                       <div className="space-y-3 mb-8">
+                         {deadlineConflict && conflictingTaskNames.length > 0 && (
+                           <div className="flex items-start gap-4 rounded-2xl bg-orange-50/80 border border-orange-200 px-5 py-4 shadow-sm shadow-orange-500/5 transition-all animate-in zoom-in-95 duration-500">
+                             <div className="p-2 bg-orange-100 rounded-xl text-orange-600">
+                                <AlertTriangle size={18} />
+                             </div>
+                             <div>
+                               <h5 className="text-[11px] font-black uppercase text-orange-700 tracking-widest mb-1.5">Scheduling Conflict</h5>
+                               <p className="text-[12px] text-orange-900 leading-snug font-medium">
+                                 <strong>{conflictingTaskNames.join(", ")}</strong> {conflictingTaskNames.length === 1 ? "is" : "are"} already set for this date.
+                               </p>
+                             </div>
+                           </div>
+                         )}
+                         {duplicateTask && duplicateTaskName && (
+                           <div className="flex items-start gap-4 rounded-2xl bg-orange-50/80 border border-orange-200 px-5 py-4 shadow-sm shadow-orange-500/5 transition-all animate-in zoom-in-95 duration-500">
+                             <div className="p-2 bg-orange-100 rounded-xl text-orange-600">
+                                <AlertTriangle size={18} />
+                             </div>
+                             <div>
+                               <h5 className="text-[11px] font-black uppercase text-orange-700 tracking-widest mb-1.5">Redundant Entry</h5>
+                               <p className="text-[12px] text-orange-900 leading-snug font-medium">
+                                 A task with the name <strong>&quot;{duplicateTaskName}&quot;</strong> already exists in your active list.
+                               </p>
+                             </div>
+                           </div>
+                         )}
+                       </div>
+
+                       {/* Confirm / Cancel Buttons */}
+                       <div className="flex gap-4">
+                         <button onClick={handleCancel} className="flex-1 py-4 rounded-2xl bg-white border border-slate-200 text-[13px] font-black text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition-all duration-300 shadow-sm cursor-pointer uppercase tracking-widest">
+                           Dismiss
+                         </button>
+                         <button 
+                            onClick={handleConfirm} 
+                            disabled={confirmLoading} 
+                            className={`flex-[2] py-4 rounded-2xl text-[13px] font-black text-white transition-all duration-500 cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2.5 shadow-xl uppercase tracking-[0.15em] ${pendingDecision.action === "DELETE" ? "bg-red-500 hover:bg-black shadow-red-200/50" : "bg-blue-600 hover:bg-black shadow-blue-200/50"}`}
+                         >
+                           {confirmLoading ? (
+                             <div className="animate-spin h-5 w-5 border-3 border-white border-t-transparent rounded-full" />
+                           ) : (
+                             <><Check size={18} strokeWidth={3} /> {pendingDecision.action === "DELETE" ? "Execute Deletion" : "Confirm Action"}</>
+                           )}
+                         </button>
+                       </div>
                       </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })()}
-             {taskList && (
-               <div className="mt-4 rounded-xl border border-blue-100 overflow-hidden">
-                 <div className="px-5 py-3 bg-blue-50/70 border-b border-blue-100">
-                   <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Your Notion Tasks : {taskList.length}</p>
-                 </div>
-                 <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-slate-100 bg-slate-50/50">
-                          <th className="text-left px-5 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide w-1/2">Task</th>
-                          <th className="text-left px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Status</th>
-                          <th className="text-left px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Date</th>
-                          {databaseCount > 1 && <th className="text-left px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Source</th>}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {taskList.map((task, i) => (
-                          <tr key={task.id} className={`${i % 2 === 0 ? "bg-white" : "bg-slate-50/30"} border-b border-slate-50 last:border-0`}>
-                            <td className="px-5 py-3 font-medium text-slate-700">{task.name}</td>
-                            <td className="px-4 py-3">
-                              <span className={statusBadge(task.status ?? "")}>{task.status ?? "\u2013"}</span>
-                            </td>
-                            <td className="px-4 py-3 text-slate-500 text-xs tabular-nums">{formatDeadline(task.deadline ?? "")}</td>
-                            {databaseCount > 1 && (
-                              <td className="px-4 py-3">
-                                <span className="text-[10px] font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full whitespace-nowrap">
-                                  {task.databaseName || "Unknown"}
-                                </span>
-                              </td>
-                            )}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                   ) : (
+                     /* Regular response message: Premium Typography */
+                     message ? (
+                       <div className="whitespace-pre-wrap text-[15px] font-bold text-slate-800 leading-relaxed tracking-tight animate-in slide-in-from-top-4 duration-500">
+                         {message}
+                       </div>
+                     ) : null
+                   )}
                  </div>
                </div>
              )}
-         </div>
-          <div className="bg-slate-50/50 p-4 border-t border-slate-100 flex justify-between text-[10px] text-slate-400">
-            <span>{databaseCount} Notion {databaseCount === 1 ? 'Database' : 'Databases'} Connected</span>
-            <span>Powered by Qwen 3</span>
+
+            {/* Proactive Suggestion Card: RPG Gold theme */}
+            {suggestion && !message && !pendingDecision && status === "idle" && (() => {
+               const pc = priorityConfig(suggestion.priority);
+               return (
+                 <div className={`mt-8 rounded-[2rem] border overflow-hidden animate-in fade-in zoom-in-95 duration-700 ${pc.border} shadow-lg shadow-blue-100/5`}>
+                   <div className={`px-6 py-3.5 flex items-center gap-3 border-b ${pc.headerBg}`}>
+                     <Sparkles size={14} className={pc.iconColor} />
+                     <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Strategy Insight</span>
+                     <span className={`ml-auto inline-block text-[10px] font-black px-3 py-1 rounded-full border shadow-sm ${pc.badge}`}>{suggestion.priority}</span>
+                   </div>
+                   <div className={`px-8 py-7 ${pc.cardBg}`}>
+                     <p className="font-black text-slate-900 text-lg mb-2 relative tracking-tight leading-tight">
+                        {suggestion.suggestion}
+                     </p>
+                     <p className="text-sm font-medium text-slate-600/80 leading-relaxed mb-6 opacity-80">{suggestion.reason}</p>
+                     
+                     <div className="flex flex-col gap-2">
+                        <div className="flex justify-between items-center px-1">
+                           <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">AI Confidence</span>
+                           <span className="text-[10px] font-black text-slate-800 tabular-nums">{Math.round(suggestion.confidence * 100)}%</span>
+                        </div>
+                        <div className="bg-white/50 rounded-full h-2.5 overflow-hidden p-0.5 border border-white">
+                           <div className={`h-full rounded-full transition-all duration-1000 ease-out shadow-sm ${pc.accent}`} style={{ width: `${Math.round(suggestion.confidence * 100)}%` }} />
+                        </div>
+                     </div>
+
+                     {/* Proactive Thinking */}
+                     {suggestion.thinkContext && (
+                       <div className="mt-6 pt-5 border-t border-slate-200/40">
+                         <button
+                           type="button"
+                           onClick={() => setProactiveThinkOpen(!proactiveThinkOpen)}
+                           className="flex items-center gap-2 text-[10px] font-black text-slate-400 hover:text-blue-600 transition-all uppercase tracking-[0.15em] cursor-pointer"
+                         >
+                           <Brain size={12} className={proactiveThinkOpen ? "text-blue-500" : ""} />
+                           <span>{proactiveThinkOpen ? "Collapse Intelligence" : "Expand Intelligence"}</span>
+                           <svg
+                             viewBox="0 0 24 24"
+                             fill="none"
+                             stroke="currentColor"
+                             strokeWidth="3"
+                             className={`w-2.5 h-2.5 transition-transform duration-500 ${proactiveThinkOpen ? "rotate-180" : "rotate-0 text-slate-300"}`}
+                           >
+                             <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round"/>
+                           </svg>
+                         </button>
+                         {proactiveThinkOpen && (
+                           <div className="mt-4 max-h-48 overflow-y-auto pl-4 border-l-2 border-slate-200/60 custom-scrollbar">
+                             <p className="text-[11px] text-slate-500 italic leading-relaxed whitespace-pre-wrap font-mono opacity-70">
+                               {suggestion.thinkContext}
+                             </p>
+                           </div>
+                         )}
+                       </div>
+                     )}
+                   </div>
+                 </div>
+               );
+             })()}
+
+               {/* Task Section: Modern High-End Table */}
+               {taskList && (
+                 <div className={`mt-14 animate-in slide-in-from-bottom-12 duration-1000 delay-300 transition-opacity duration-500 ${isLoading ? 'opacity-30' : 'opacity-100'}`}>
+                   <div className="flex items-center justify-between mb-6 px-4">
+                     <h4 className="text-[11px] font-black text-slate-500 uppercase tracking-[0.3em] flex items-center gap-3">
+                        <div className="w-8 h-[2px] bg-blue-500/40"></div>
+                        Notion Ledger
+                     </h4>
+                     <div className="flex items-center gap-4">
+                        <span className="flex items-center gap-1.5 text-[10px] font-black text-slate-400 bg-slate-50 px-3.5 py-1.5 rounded-full border border-slate-100 uppercase tracking-widest shadow-sm">
+                           <Clock size={12} className="text-blue-500" />
+                           Auto-Syncing
+                        </span>
+                        <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">
+                           {taskList.length} Tasks Found
+                        </span>
+                     </div>
+                   </div>
+                   
+                   <div className="bg-white/80 border border-slate-100/50 rounded-[2.5rem] overflow-hidden shadow-[0_10px_40px_-15px_rgba(0,0,0,0.03)] backdrop-blur-md">
+                     <div className="overflow-x-auto">
+                       <table className="w-full text-left border-separate border-spacing-0">
+                         <thead>
+                           <tr className="bg-slate-50/50">
+                             <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] border-b border-slate-100/80">Objective</th>
+                             <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] border-b border-slate-100/80">Stage</th>
+                             <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] border-b border-slate-100/80">Timeline</th>
+                             {databaseCount > 1 && <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] border-b border-slate-100/80">Origin</th>}
+                           </tr>
+                         </thead>
+                         <tbody className="divide-y divide-slate-50/50">
+                           {taskList.map((task) => (
+                             <tr key={task.id} className="group hover:bg-blue-50/20 transition-all duration-300 cursor-default">
+                               <td className="px-8 py-5">
+                                 <span className="text-[14px] font-bold text-slate-800 tracking-tight block max-w-md truncate group-hover:text-blue-600 transition-colors" title={task.name}>
+                                   {task.name}
+                                 </span>
+                               </td>
+                               <td className="px-8 py-5">
+                                 <div className="inline-block scale-95 origin-left">
+                                    {statusBadge(task.status ?? "")}
+                                 </div>
+                               </td>
+                               <td className="px-8 py-5 whitespace-nowrap">
+                                 <span className="text-[12px] font-black text-slate-500 flex items-center gap-2 group-hover:text-slate-700 transition-colors">
+                                   {task.deadline ? (
+                                      <div className="flex flex-col">
+                                         <span className="text-slate-800">{formatDeadline(task.deadline).split(' ')[0]}</span>
+                                         <span className="text-[9px] uppercase tracking-tighter opacity-70">{formatDeadline(task.deadline).split(' ').slice(1).join(' ')}</span>
+                                      </div>
+                                   ) : <span className="opacity-40 font-normal">No deadline</span>}
+                                 </span>
+                               </td>
+                               {databaseCount > 1 && (
+                                 <td className="px-8 py-5">
+                                   <div className="flex items-center gap-2">
+                                      <div className="w-1.5 h-1.5 rounded-full bg-slate-200 group-hover:bg-blue-400"></div>
+                                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest group-hover:text-slate-600 transition-colors">
+                                        {task.databaseName || "Source"}
+                                      </span>
+                                   </div>
+                                 </td>
+                               )}
+                             </tr>
+                           ))}
+                         </tbody>
+                       </table>
+                     </div>
+                   </div>
+                 </div>
+               )}
           </div>
-       </div>
-    </div>
+          
+          {/* Footer: Multi-engine tech credits */}
+          <div className="bg-slate-50/70 py-6 px-10 border-t border-slate-100/60 flex items-center justify-between text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">
+            <div className="flex items-center gap-5">
+               <div className="flex items-center gap-2">
+                 <div className="w-1 h-1 bg-blue-500 rounded-full"></div>
+                 {databaseCount} Databases
+               </div>
+               <div className="flex items-center gap-2">
+                 <div className="w-1 h-1 bg-green-500 rounded-full"></div>
+                 Live Sync
+               </div>
+            </div>
+            <div className="flex items-center gap-3 lowercase font-medium tracking-normal text-[11px] text-slate-500">
+               <span>Processed via <span className="text-slate-800 font-bold uppercase tracking-wider text-[9px]">Llama-3-Refined</span></span>
+               <div className="h-3 w-[1px] bg-slate-200"></div>
+               <span>Powered by <span className="text-slate-800 font-bold uppercase tracking-wider text-[9px]">Qwen 2.5 Max</span></span>
+            </div>
+          </div>
+        </div>
+     </div>
   );
 }

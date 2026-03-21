@@ -1,0 +1,26 @@
+"use client";
+import React from 'react';
+import Sidebar from '@/components/Sidebar';
+
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+   return (
+    <div className="flex min-h-screen bg-[#fcfcfd] relative overflow-hidden">
+      {/* Premium Background Elements */}
+      <div className="fixed top-0 left-0 w-full h-full pointer-events-none z-0">
+         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-50/50 rounded-full blur-[120px]"></div>
+         <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-indigo-50/50 rounded-full blur-[120px]"></div>
+      </div>
+
+      <Sidebar />
+      <main className="flex-1 overflow-y-auto relative z-10">
+        <div className="max-w-6xl mx-auto px-12 py-12">
+          {children}
+        </div>
+      </main>
+    </div>
+  );
+}

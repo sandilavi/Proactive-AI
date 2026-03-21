@@ -35,9 +35,23 @@ export interface AgentResponse {
     plan?: Array<{
       title: string;
       date?: string;
+      durationHours?: number;
       reason?: string;
     }>;
   };
+}
+
+export interface CapacityInsight {
+  date: string;
+  totalHours: number;
+  status: "SAFE" | "BUSY" | "OVERLOADED";
+  taskInsights?: Array<{ name: string; estimatedHours: number }>;
+  suggestion?: string;
+}
+
+export interface CapacityReport {
+  insights: CapacityInsight[];
+  overallSummary: string;
 }
 
 
@@ -214,7 +228,11 @@ export async function getAgentSuggestion(tasks: NotionTask[], userOffset: string
 
 // Analyze user prompt and decides which action needs to take
 export async function processUserPrompt(prompt: string, taskContext: string, userOffset: string, databaseNames: string[] = []): Promise<AgentResponse & { thinkContext?: string }> {
-  const today = new Date().toISOString().split("T")[0];
+  // Timezone adjustment for "Today"
+  const [sign, h, m] = userOffset.match(/([+-])(\d{2}):(\d{2})/)?.slice(1) || ["+", "0", "0"];
+  const offsetMs = (parseInt(h) * 60 + parseInt(m)) * 60000 * (sign === "+" ? 1 : -1);
+  const localNow = new Date(new Date().getTime() + offsetMs);
+  const today = localNow.toISOString().split("T")[0];
 
   const dbListStr = databaseNames.length > 0
     ? `\n\nAVAILABLE DATABASES: ${databaseNames.map(n => `"${n}"`).join(", ")}\n- For CREATE/PLAN: pick the most logical database based on the task context. Set "targetDatabase" to the exact database name.\n- For UPDATE/DELETE: the taskId is globally unique, no database routing needed.`
@@ -228,42 +246,41 @@ export async function processUserPrompt(prompt: string, taskContext: string, use
         content: `You are a Notion Task Agent.Today is ${today}.Timezone offset: ${userOffset}.
 
         EXISTING TASKS:
-      ${taskContext}${dbListStr}
+        ${taskContext}${dbListStr}
 
-  ACTIONS(choose one):
-  - CREATE: New task.Extract: title, status(default "To Do"), date(only if user mentions one), targetDatabase.
-  - READ: List / view tasks.
-        - UPDATE: Modify task properties.Extract: taskId, status, date.
-        - DELETE: Remove task.Extract: taskId.
-        - SUGGEST: Prioritization advice(e.g. "what is urgent?").
-        - PLAN: Perform "Cognitive Load-Aware Constraint Solving" to generate a sequential roadmap of 3 - 6 logical subtasks.
-          WEIGHTED CAPACITY PACKING: Do not perform binary skipping of busy days.Instead, perform a pre - computation of the user's existing "Temporal Density" using these Cognitive Load weights:
-    - CRITICAL: 3 units | HIGH: 2 units | MEDIUM: 1 unit | LOW: 0.5 units.
-          - DAILY CAPACITY: Each day has a 4 - unit threshold.
-          Distribute new subtasks(assume 1 unit each) by filling the remaining capacity on days where EXISTING TASKS do not already reach the 4 - unit limit.Only skip days that are at maximum theoretical capacity.
-          NEVER use a Task ID as a title.Extract: a concise 'planSummary'(1 - 2 sentences) providing a density - based feasibility analysis(e.g., "I scheduled Step 2 on Tuesday as your existing low-weight tasks leave 3 units of cognitive headroom"), targetDatabase, and an array of subtasks with title, date, and reason in the 'plan' array.
-        - UNCLEAR: UPDATE / DELETE intent but no task confidently matches.Set attemptedName.
+        ACTIONS(choose one):
+        - CREATE: New task. Extract: title, status (default "To Do"), date (only if user mentions one), targetDatabase.
+        - READ: List / view tasks.
+        - UPDATE: Modify task properties. Extract: taskId, status, date.
+        - DELETE: Remove task. Extract: taskId.
+        - SUGGEST: Prioritization advice (e.g. "what is urgent?").
+        - PLAN: Perform "Time-Based Capacity Planning" to generate a sequential roadmap of 3 - 6 logical subtasks.
+          - 8-HOUR DAILY CAPACITY: Each day has a hard limit of 8 hours of productive work.
+          - ESTIMATED COMPLETION TIME (ECT): Estimate hours for EXISTING TASKS based on complexity (e.g. 0.5h for quick tasks, 1-2h for medium sized tasks etc).
+          - SEQUENTIAL PACKING: Assign an estimated duration (hours) to each new subtask. Schedule subtasks on days where the total (Existing Tasks + New Subtasks) does not exceed 8 hours. Skip any day at/above capacity.
+          - NEVER use a Task ID as a title. Extract: a concise 'planSummary'(1 - 2 sentences) providing a "Time-Based Feasibility Analysis" (e.g., "I scheduled Step 2 on Tuesday because your existing tasks take 3 hours, leaving 5 hours of capacity from your 8-hour daily limit"), targetDatabase, and an array of subtasks with title, date, durationHours, and reason in the 'plan' array.
+        - UNCLEAR: UPDATE / DELETE intent but no task confidently matches. Set attemptedName.
         - OTHER: Non task topics.
 
         DATE RULES:
-  - Only include date / time if user explicitly mentions it.Never assume today or midnight.
-        - Relative dates("tomorrow", "next Friday") → calculate from ${today}.
-  - Time mentioned → ISO 8601: YYYY - MM - DDTHH: mm:ss${userOffset}. No time → YYYY - MM - DD only.
+        - Only include date / time if user explicitly mentions it. Never assume today or midnight.
+        - Relative dates ("tomorrow", "next Friday") → calculate from ${today}.
+        - Time mentioned → ISO 8601: YYYY - MM - DDTHH: mm:ss${userOffset}. No time → YYYY - MM - DD only.
 
-    MATCHING(UPDATE / DELETE):
-  - Match by core keywords, case -insensitive, ignore filler words("a", "the", "an").
+        MATCHING(UPDATE / DELETE):
+        - Match by core keywords, case -insensitive, ignore filler words("a", "the", "an").
         - Only match if exactly ONE task clearly fits.Ambiguous / no match → UNCLEAR.
         - Use exact taskId from the task list.
 
-    OUTPUT(strict JSON):
-  {
-    "action": "CREATE|READ|UPDATE|DELETE|SUGGEST|PLAN|UNCLEAR|OTHER",
-      "data": {
-      "taskId": "", "status": "", "title": "", "date": "", "attemptedName": "", "targetDatabase": "",
-        "planSummary": "Short feasibility analysis here",
-          "plan": [{ "title": "", "date": "", "reason": "" }]
-    }
-  } `,
+        OUTPUT(strict JSON):
+        {
+          "action": "CREATE | READ | UPDATE | DELETE | SUGGEST | PLAN | UNCLEAR | OTHER",
+            "data": {
+            "taskId": "", "status": "", "title": "", "date": "", "attemptedName": "", "targetDatabase": "",
+              "planSummary": "Short feasibility analysis here",
+                "plan": [{ "title": "", "date": "", "durationHours": 0, "reason": "" }]
+          }
+        } `,
       },
       { role: "user", content: prompt },
     ],
@@ -576,3 +593,211 @@ export async function confirmAction(decision: AgentResponse) {
     tasks: returnTasks,
   };
 }
+
+// Strategic Intelligence: Analyze entire list for capacity overloads
+export async function getCapacityInsights(tasks: NotionTask[], userOffset: string): Promise<CapacityReport> {
+  const [sign, h, m] = userOffset.match(/([+-])(\d{2}):(\d{2})/)?.slice(1) || ["+", "0", "0"];
+  const offsetMs = (parseInt(h) * 60 + parseInt(m)) * 60000 * (sign === "+" ? 1 : -1);
+  const localNow = new Date(new Date().getTime() + offsetMs);
+  const today = localNow.toISOString().split("T")[0];
+
+  const taskContext = tasks
+    .filter(t => t.status?.toLowerCase() !== "done")
+    .map(t => `- Name: "${t.name}", Status: "${t.status}", Deadline: "${t.deadline}"`)
+    .join("\n");
+
+  if (!taskContext) {
+    return { insights: [], overallSummary: "Your schedule is clear!" };
+  }
+
+  const response = await groq.chat.completions.create({
+    model: GROQ_MODEL,
+    messages: [
+      {
+        role: "system",
+        content: `You are a Capacity Planning Agent. Today is ${today}. 
+        Analyze the task list and provide a Strategic Intelligence Report.
+        
+        RULES:
+        1. Group tasks by date.
+        2. Estimate "Completion Hours" for each task based on complexity (0.5h for quick errands, 1-2h for medium sized tasks, 3-5h for deep work).
+        3. Thresholds: SAFE (<6h per day), BUSY (6-8h per day), OVERLOADED (>8h per day).
+        4. For OVERLOADED days, identify the heaviest task and suggest moving it to a nearby day with capacity.
+        
+        OUTPUT strict JSON:
+        {
+          "insights": [
+             { "date": "YYYY-MM-DD", "totalHours": 0.0, "status": "SAFE|BUSY|OVERLOADED", "taskInsights": [{ "name": "", "estimatedHours": 0.0 }], "suggestion": "Specific move advice" }
+          ],
+          "overallSummary": "1-2 sentence overview of the week"
+        }`
+      },
+      { role: "user", content: `Existing Tasks:\n${taskContext}` }
+    ]
+  });
+
+  const raw = response.choices[0]?.message?.content || "";
+  return extractJSON<CapacityReport>(raw) || { insights: [], overallSummary: "Could not generate report." };
+}
+
+// ---------------------------------------------------------------------------
+// Growth Lab: RPG-style Skill Tracking
+// ---------------------------------------------------------------------------
+export interface SkillInsight {
+  skillName: string;
+  xp: number; // based on estimated hours
+  level: number;
+  recentTasks: string[];
+}
+
+export interface GrowthReport {
+  skills: SkillInsight[];
+  topSkill: string;
+  summary: string;
+}
+
+export async function getGrowthInsights(tasks: NotionTask[]): Promise<GrowthReport> {
+  const taskContext = tasks
+    .map(t => `- Name: "${t.name}", Status: "${t.status}"`)
+    .join("\n");
+
+  if (!taskContext) {
+    return { skills: [], topSkill: "None", summary: "Your skill tree is waiting to grow! Start adding tasks." };
+  }
+
+  const response = await groq.chat.completions.create({
+    model: GROQ_MODEL,
+    messages: [
+      {
+        role: "system",
+        content: `You are The Growth Lab AI. Analyze the user's tasks and create an RPG-style "Skill Tree".
+        
+        RULES:
+        1. Categorize tasks into broad skills (e.g., "Frontend", "Backend", "Design", "Writing", "Management", "Life/Chores").
+        2. Assign XP to each skill based on estimated effort (roughly 1 XP = 1 hour).
+        3. Calculate a level for each skill: Level = Math.floor(XP / 10) + 1.
+        4. Provide the names of 2-3 recent tasks that contributed to this skill.
+        5. Identify the "topSkill" (the one with the most XP).
+        6. Write a short, motivating summary celebrating their progress (e.g., "You spent 15 hours on Backend this week. You're becoming a specialist!").
+        
+        OUTPUT strict JSON:
+        {
+          "skills": [
+            { "skillName": "String", "xp": Number, "level": Number, "recentTasks": ["task1", "task2"] }
+          ],
+          "topSkill": "String",
+          "summary": "String"
+        }`
+      },
+      { role: "user", content: `Existing Tasks:\n${taskContext}` }
+    ]
+  });
+
+  const raw = response.choices[0]?.message?.content || "";
+  return extractJSON<GrowthReport>(raw) || { skills: [], topSkill: "None", summary: "Could not generate growth report." };
+}
+
+// ---------------------------------------------------------------------------
+// Productivity Pulse: Predictive Analytics
+// ---------------------------------------------------------------------------
+export interface PulseTrend {
+  trendName: string;
+  metric: string;
+  description: string;
+  isPositive: boolean;
+}
+
+export interface PulseReport {
+  overallScore: number; // 0-100
+  summary: string;
+  trends: PulseTrend[];
+  recommendation: string;
+}
+
+export async function getPulseInsights(tasks: NotionTask[]): Promise<PulseReport> {
+  const taskContext = tasks
+    .map(t => `- Name: "${t.name}", Status: "${t.status}", Deadline: "${t.deadline}"`)
+    .join("\n");
+
+  if (!taskContext) {
+    return { overallScore: 0, summary: "No data available yet.", trends: [], recommendation: "Add tasks to see your pulse." };
+  }
+
+  const response = await groq.chat.completions.create({
+    model: GROQ_MODEL,
+    messages: [
+      {
+        role: "system",
+        content: `You are The Productivity Pulse AI. Analyze the user's task list (status, deadlines) and generate predictive analytics.
+        
+        RULES:
+        1. Calculate a realistic 'overallScore' (0-100) representing their workflow health (e.g., lots of overdue = lower score).
+        2. Identify 3-4 distinct 'trends' in their habits (e.g., "Overestimating Fridays", "Strong finish rate", "Heavy backlog").
+        3. Determine if each trend isPositive (boolean).
+        4. Give a strong, actionable recommendation for the upcoming days.
+        
+        OUTPUT strict JSON:
+        {
+          "overallScore": Number,
+          "summary": "String",
+          "trends": [
+            { "trendName": "String", "metric": "String (e.g. '+20%')", "description": "String", "isPositive": Boolean }
+          ],
+          "recommendation": "String"
+        }`
+      },
+      { role: "user", content: `Tasks:\n${taskContext}` }
+    ]
+  });
+
+  const raw = response.choices[0]?.message?.content || "";
+  return extractJSON<PulseReport>(raw) || { overallScore: 50, summary: "Analysis failed.", trends: [], recommendation: "" };
+}
+
+// ---------------------------------------------------------------------------
+// Focus Horizon: Automatic Project Breakdown
+// ---------------------------------------------------------------------------
+export interface HorizonTaskEntry {
+  dayOffset: number; // Day 1, Day 2, etc.
+  title: string;
+  estimatedHours: number;
+  description: string;
+}
+
+export interface HorizonRoadmap {
+  projectTitle: string;
+  summary: string;
+  tasks: HorizonTaskEntry[];
+}
+
+export async function generateHorizonRoadmap(goalPrompt: string): Promise<HorizonRoadmap> {
+  const response = await groq.chat.completions.create({
+    model: GROQ_MODEL,
+    messages: [
+      {
+        role: "system",
+        content: `You are the Focus Horizon AI. The user will provide a high-level project goal. Your job is to break it down into a highly actionable, logical 14-day roadmap.
+        
+        RULES:
+        1. Break the goal into sequential daily tasks.
+        2. Assign a 'dayOffset' (1 to 14) for each task. You don't have to fill all 14 days if the project is small.
+        3. Estimate hours per task (keep it under 4h per day).
+        4. Provide clear descriptions.
+        
+        OUTPUT strict JSON:
+        {
+          "projectTitle": "String",
+          "summary": "String",
+          "tasks": [
+            { "dayOffset": Number, "title": "String", "estimatedHours": Number, "description": "String" }
+          ]
+        }`
+      },
+      { role: "user", content: `Project Goal:\n${goalPrompt}` }
+    ]
+  });
+
+  const raw = response.choices[0]?.message?.content || "";
+  return extractJSON<HorizonRoadmap>(raw) || { projectTitle: "Generation Failed", summary: "Please try again.", tasks: [] };
+}
+
