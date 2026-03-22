@@ -3,8 +3,6 @@ import React, { useState } from 'react';
 import { 
   Compass, 
   Map, 
-  Flag,
-  CalendarDays,
   Clock,
   Zap,
   Loader2,
@@ -57,8 +55,7 @@ export default function HorizonView() {
             
             <div className="flex flex-col sm:flex-row gap-4 pt-4 relative">
                <div className="flex-1 relative group/input">
-                 {/* Input Glow */}
-                 <div className="absolute -inset-1 bg-gradient-to-r from-indigo-500/0 via-indigo-500/10 to-indigo-500/0 rounded-[1.5rem] blur-xl opacity-0 group-focus-within/input:opacity-100 transition-opacity duration-700 pointer-events-none"></div>
+                 
                  
                  <input 
                     type="text" 
@@ -72,7 +69,7 @@ export default function HorizonView() {
                <button 
                   type="submit" 
                   disabled={loading || !goal.trim()} 
-                  className="px-10 py-6 bg-indigo-600 hover:bg-black text-white rounded-[1.2rem] font-black text-sm uppercase tracking-[0.2em] flex items-center justify-center gap-3 transition-all duration-500 shadow-xl shadow-indigo-200/50 hover:shadow-black/20 disabled:opacity-30 disabled:cursor-not-allowed group-hover:scale-[1.02] active:scale-95"
+                  className="px-10 py-6 bg-slate-900 hover:bg-blue-600 text-white rounded-[1.2rem] font-black text-sm uppercase tracking-[0.2em] flex items-center justify-center gap-3 transition-all duration-500 shadow-xl shadow-md hover:shadow-black/20 disabled:opacity-30 disabled:cursor-not-allowed group-hover:scale-[1.02] active:scale-95"
                >
                   {loading ? <Loader2 size={18} className="animate-spin" /> : <Zap size={18} className="fill-current" />}
                   <span>{loading ? "Calculating..." : "Generate Roadmap"}</span>
@@ -86,7 +83,7 @@ export default function HorizonView() {
       {roadmap && (
         <div className="animate-in slide-in-from-bottom-12 duration-1000 space-y-12">
            {/* Summary Header: Cinematic Look */}
-           <div className="bg-gradient-to-br from-indigo-700 via-indigo-800 to-black rounded-[3.5rem] p-12 text-white shadow-2xl shadow-indigo-200/50 relative overflow-hidden group">
+           <div className="bg-slate-900 rounded-[3.5rem] p-12 text-white shadow-2xl shadow-md relative overflow-hidden group">
              {/* Animated Overlay */}
              <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10 mix-blend-overlay"></div>
              
@@ -131,7 +128,7 @@ export default function HorizonView() {
                               <div className="flex flex-col">
                                  <h4 className="text-xl font-black text-slate-800 tracking-tight leading-tight group-hover:text-indigo-600 transition-colors uppercase">{task.title}</h4>
                                  <div className="flex items-center gap-1.5 mt-1">
-                                    <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></div>
+                                    <div className="w-1.5 h-1.5 rounded-full bg-slate-400"></div>
                                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Active Phase</span>
                                  </div>
                               </div>

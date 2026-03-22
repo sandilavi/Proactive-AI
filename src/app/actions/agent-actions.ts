@@ -1,6 +1,7 @@
 "use server";
 import { groq, GROQ_MODEL } from "@/lib/groq";
 import { fetchNotionTasks } from "./notion-actions";
+import { unstable_cache } from "next/cache";
 
 export interface NotionTask {
   id: string;
@@ -177,7 +178,7 @@ export async function getAgentSuggestion(tasks: NotionTask[], userOffset: string
         - Math Check: TRUST the pre-calculated Urgency label and Time stats provided. DO NOT attempt to perform your own math comparisons or range checks.
         - Strict Interpretation: Generic/Dummy tasks (like "abc", "test", "hhh") are the absolute BOTTOM. A real leisure task (like "watch a movie") ALWAYS takes precedence over a dummy placeholder.
         - Communication: Explain your choice casually as if you are a human assistant talking to your boss. DO NOT use technical robotic phrases, logic rules, or mention internal categories. Instead, use conversational reasoning.
-        - TIME PHRASING: Use honest relative terms based on the current time (e.g., "by later today", "tomorrow afternoon", "in a few days"). NEVER use exact numeric hours/minutes. If a deadline crosses midnight, it is "tomorrow", not "today", regardless of the hour count.
+        - TIME PHRASING: Use honest relative terms based on the current time (e.g., "due today", "in few days"). NEVER use exact numeric hours/minutes (e.g., "due in 3 hours", "just over 40 minutes"). If a deadline crosses midnight, it is "tomorrow", not "today", regardless of the hour count.
         - NO INTERNAL EXPOSURE: NEVER mention internal terms like "CRITICAL", "HIGH", "Urgency", "Placeholder", etc. Just give a natural human reason why a task is important.
         
         PRIORITY LOGIC (STRICT HIERARCHY):
@@ -595,50 +596,54 @@ export async function confirmAction(decision: AgentResponse) {
 }
 
 // Strategic Intelligence: Analyze entire list for capacity overloads
-export async function getCapacityInsights(tasks: NotionTask[], userOffset: string): Promise<CapacityReport> {
-  const [sign, h, m] = userOffset.match(/([+-])(\d{2}):(\d{2})/)?.slice(1) || ["+", "0", "0"];
-  const offsetMs = (parseInt(h) * 60 + parseInt(m)) * 60000 * (sign === "+" ? 1 : -1);
-  const localNow = new Date(new Date().getTime() + offsetMs);
-  const today = localNow.toISOString().split("T")[0];
+export const getCapacityInsights = unstable_cache(
+  async (tasks: NotionTask[], userOffset: string): Promise<CapacityReport> => {
+    const [sign, h, m] = userOffset.match(/([+-])(\d{2}):(\d{2})/)?.slice(1) || ["+", "0", "0"];
+    const offsetMs = (parseInt(h) * 60 + parseInt(m)) * 60000 * (sign === "+" ? 1 : -1);
+    const localNow = new Date(new Date().getTime() + offsetMs);
+    const today = localNow.toISOString().split("T")[0];
 
-  const taskContext = tasks
-    .filter(t => t.status?.toLowerCase() !== "done")
-    .map(t => `- Name: "${t.name}", Status: "${t.status}", Deadline: "${t.deadline}"`)
-    .join("\n");
+    const taskContext = tasks
+      .filter(t => t.status?.toLowerCase() !== "done")
+      .map(t => `- Name: "${t.name}", Status: "${t.status}", Deadline: "${t.deadline}"`)
+      .join("\n");
 
-  if (!taskContext) {
-    return { insights: [], overallSummary: "Your schedule is clear!" };
-  }
+    if (!taskContext) {
+      return { insights: [], overallSummary: "Your schedule is clear!" };
+    }
 
-  const response = await groq.chat.completions.create({
-    model: GROQ_MODEL,
-    messages: [
-      {
-        role: "system",
-        content: `You are a Capacity Planning Agent. Today is ${today}. 
-        Analyze the task list and provide a Strategic Intelligence Report.
-        
-        RULES:
-        1. Group tasks by date.
-        2. Estimate "Completion Hours" for each task based on complexity (0.5h for quick errands, 1-2h for medium sized tasks, 3-5h for deep work).
-        3. Thresholds: SAFE (<6h per day), BUSY (6-8h per day), OVERLOADED (>8h per day).
-        4. For OVERLOADED days, identify the heaviest task and suggest moving it to a nearby day with capacity.
-        
-        OUTPUT strict JSON:
+    const response = await groq.chat.completions.create({
+      model: GROQ_MODEL,
+      messages: [
         {
-          "insights": [
-             { "date": "YYYY-MM-DD", "totalHours": 0.0, "status": "SAFE|BUSY|OVERLOADED", "taskInsights": [{ "name": "", "estimatedHours": 0.0 }], "suggestion": "Specific move advice" }
-          ],
-          "overallSummary": "1-2 sentence overview of the week"
-        }`
-      },
-      { role: "user", content: `Existing Tasks:\n${taskContext}` }
-    ]
-  });
+          role: "system",
+          content: `You are a Capacity Planning Agent. Today is ${today}. 
+          Analyze the task list and provide a Strategic Intelligence Report.
+          
+          RULES:
+          1. Group tasks by date.
+          2. Estimate "Completion Hours" for each task based on complexity (0.5h for quick errands, 1-2h for medium sized tasks, 3-5h for deep work).
+          3. Thresholds: SAFE (<6h per day), BUSY (6-8h per day), OVERLOADED (>8h per day).
+          4. For OVERLOADED days, identify the heaviest task and suggest moving it to a nearby day with capacity.
+          
+          OUTPUT strict JSON:
+          {
+            "insights": [
+              { "date": "YYYY-MM-DD", "totalHours": 0.0, "status": "SAFE|BUSY|OVERLOADED", "taskInsights": [{ "name": "", "estimatedHours": 0.0 }], "suggestion": "Specific move advice" }
+            ],
+            "overallSummary": "1-2 sentence overview of the week"
+          }`
+        },
+        { role: "user", content: `Existing Tasks:\n${taskContext}` }
+      ]
+    });
 
-  const raw = response.choices[0]?.message?.content || "";
-  return extractJSON<CapacityReport>(raw) || { insights: [], overallSummary: "Could not generate report." };
-}
+    const raw = response.choices[0]?.message?.content || "";
+    return extractJSON<CapacityReport>(raw) || { insights: [], overallSummary: "Could not generate report." };
+  },
+  ['strategy-insights'],
+  { revalidate: 3600, tags: ['notion-tasks'] }
+);
 
 // ---------------------------------------------------------------------------
 // Growth Lab: RPG-style Skill Tracking
@@ -656,46 +661,50 @@ export interface GrowthReport {
   summary: string;
 }
 
-export async function getGrowthInsights(tasks: NotionTask[]): Promise<GrowthReport> {
-  const taskContext = tasks
-    .map(t => `- Name: "${t.name}", Status: "${t.status}"`)
-    .join("\n");
+export const getGrowthInsights = unstable_cache(
+  async (tasks: NotionTask[]): Promise<GrowthReport> => {
+    const taskContext = tasks
+      .map(t => `- Name: "${t.name}", Status: "${t.status}"`)
+      .join("\n");
 
-  if (!taskContext) {
-    return { skills: [], topSkill: "None", summary: "Your skill tree is waiting to grow! Start adding tasks." };
-  }
+    if (!taskContext) {
+      return { skills: [], topSkill: "None", summary: "Your skill tree is waiting to grow! Start adding tasks." };
+    }
 
-  const response = await groq.chat.completions.create({
-    model: GROQ_MODEL,
-    messages: [
-      {
-        role: "system",
-        content: `You are The Growth Lab AI. Analyze the user's tasks and create an RPG-style "Skill Tree".
-        
-        RULES:
-        1. Categorize tasks into broad skills (e.g., "Frontend", "Backend", "Design", "Writing", "Management", "Life/Chores").
-        2. Assign XP to each skill based on estimated effort (roughly 1 XP = 1 hour).
-        3. Calculate a level for each skill: Level = Math.floor(XP / 10) + 1.
-        4. Provide the names of 2-3 recent tasks that contributed to this skill.
-        5. Identify the "topSkill" (the one with the most XP).
-        6. Write a short, motivating summary celebrating their progress (e.g., "You spent 15 hours on Backend this week. You're becoming a specialist!").
-        
-        OUTPUT strict JSON:
+    const response = await groq.chat.completions.create({
+      model: GROQ_MODEL,
+      messages: [
         {
-          "skills": [
-            { "skillName": "String", "xp": Number, "level": Number, "recentTasks": ["task1", "task2"] }
-          ],
-          "topSkill": "String",
-          "summary": "String"
-        }`
-      },
-      { role: "user", content: `Existing Tasks:\n${taskContext}` }
-    ]
-  });
+          role: "system",
+          content: `You are The Growth Lab AI. Analyze the user's tasks and create an RPG-style "Skill Tree".
+          
+          RULES:
+          1. Categorize tasks into broad skills (e.g., "Frontend", "Backend", "Design", "Writing", "Management", "Life/Chores").
+          2. Assign XP to each skill based on estimated effort (roughly 1 XP = 1 hour).
+          3. Calculate a level for each skill: Level = Math.floor(XP / 10) + 1.
+          4. Provide the names of 2-3 recent tasks that contributed to this skill.
+          5. Identify the "topSkill" (the one with the most XP).
+          6. Write a short, motivating summary celebrating their progress (e.g., "You spent 15 hours on Backend this week. You're becoming a specialist!").
+          
+          OUTPUT strict JSON:
+          {
+            "skills": [
+              { "skillName": "String", "xp": Number, "level": Number, "recentTasks": ["task1", "task2"] }
+            ],
+            "topSkill": "String",
+            "summary": "String"
+          }`
+        },
+        { role: "user", content: `Existing Tasks:\n${taskContext}` }
+      ]
+    });
 
-  const raw = response.choices[0]?.message?.content || "";
-  return extractJSON<GrowthReport>(raw) || { skills: [], topSkill: "None", summary: "Could not generate growth report." };
-}
+    const raw = response.choices[0]?.message?.content || "";
+    return extractJSON<GrowthReport>(raw) || { skills: [], topSkill: "None", summary: "Could not generate growth report." };
+  },
+  ['growth-insights'],
+  { revalidate: 3600, tags: ['notion-tasks'] }
+);
 
 // ---------------------------------------------------------------------------
 // Productivity Pulse: Predictive Analytics
@@ -714,45 +723,49 @@ export interface PulseReport {
   recommendation: string;
 }
 
-export async function getPulseInsights(tasks: NotionTask[]): Promise<PulseReport> {
-  const taskContext = tasks
-    .map(t => `- Name: "${t.name}", Status: "${t.status}", Deadline: "${t.deadline}"`)
-    .join("\n");
+export const getPulseInsights = unstable_cache(
+  async (tasks: NotionTask[]): Promise<PulseReport> => {
+    const taskContext = tasks
+      .map(t => `- Name: "${t.name}", Status: "${t.status}", Deadline: "${t.deadline}"`)
+      .join("\n");
 
-  if (!taskContext) {
-    return { overallScore: 0, summary: "No data available yet.", trends: [], recommendation: "Add tasks to see your pulse." };
-  }
+    if (!taskContext) {
+      return { overallScore: 0, summary: "No data available yet.", trends: [], recommendation: "Add tasks to see your pulse." };
+    }
 
-  const response = await groq.chat.completions.create({
-    model: GROQ_MODEL,
-    messages: [
-      {
-        role: "system",
-        content: `You are The Productivity Pulse AI. Analyze the user's task list (status, deadlines) and generate predictive analytics.
-        
-        RULES:
-        1. Calculate a realistic 'overallScore' (0-100) representing their workflow health (e.g., lots of overdue = lower score).
-        2. Identify 3-4 distinct 'trends' in their habits (e.g., "Overestimating Fridays", "Strong finish rate", "Heavy backlog").
-        3. Determine if each trend isPositive (boolean).
-        4. Give a strong, actionable recommendation for the upcoming days.
-        
-        OUTPUT strict JSON:
+    const response = await groq.chat.completions.create({
+      model: GROQ_MODEL,
+      messages: [
         {
-          "overallScore": Number,
-          "summary": "String",
-          "trends": [
-            { "trendName": "String", "metric": "String (e.g. '+20%')", "description": "String", "isPositive": Boolean }
-          ],
-          "recommendation": "String"
-        }`
-      },
-      { role: "user", content: `Tasks:\n${taskContext}` }
-    ]
-  });
+          role: "system",
+          content: `You are The Productivity Pulse AI. Analyze the user's task list (status, deadlines) and generate predictive analytics.
+          
+          RULES:
+          1. Calculate a realistic 'overallScore' (0-100) representing their workflow health (e.g., lots of overdue = lower score).
+          2. Identify 3-4 distinct 'trends' in their habits (e.g., "Overestimating Fridays", "Strong finish rate", "Heavy backlog").
+          3. Determine if each trend isPositive (boolean).
+          4. Give a strong, actionable recommendation for the upcoming days.
+          
+          OUTPUT strict JSON:
+          {
+            "overallScore": Number,
+            "summary": "String",
+            "trends": [
+              { "trendName": "String", "metric": "String (e.g. '+20%')", "description": "String", "isPositive": Boolean }
+            ],
+            "recommendation": "String"
+          }`
+        },
+        { role: "user", content: `Tasks:\n${taskContext}` }
+      ]
+    });
 
-  const raw = response.choices[0]?.message?.content || "";
-  return extractJSON<PulseReport>(raw) || { overallScore: 50, summary: "Analysis failed.", trends: [], recommendation: "" };
-}
+    const raw = response.choices[0]?.message?.content || "";
+    return extractJSON<PulseReport>(raw) || { overallScore: 50, summary: "Analysis failed.", trends: [], recommendation: "" };
+  },
+  ['pulse-insights'],
+  { revalidate: 3600, tags: ['notion-tasks'] }
+);
 
 // ---------------------------------------------------------------------------
 // Focus Horizon: Automatic Project Breakdown

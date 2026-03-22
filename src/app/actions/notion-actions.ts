@@ -1,15 +1,21 @@
 "use server";
 
-import { notion, getRawNotionTasks, discoverDatabases, NotionDatabase } from "@/lib/notion";
-import { revalidatePath } from "next/cache";
+import { notion, getRawNotionTasks, discoverDatabases as rawDiscoverDatabases, NotionDatabase } from "@/lib/notion";
+import { revalidatePath, unstable_cache, revalidateTag } from "next/cache";
 
 interface NotionPage {
   id: string;
   properties: Record<string, any>;
 }
 
-// Re-export discoverDatabases for use in page.tsx
-export { discoverDatabases };
+// 1. Cache the database discovery process
+// This drastically speeds up page transitions (e.g. going from dashboard to strategy)
+export const discoverDatabases = unstable_cache(
+  async () => rawDiscoverDatabases(),
+  ['notion-databases'],
+  { revalidate: 300, tags: ['notion-databases'] } // Cache for 5 mins
+);
+
 export type { NotionDatabase };
 
 // Fetch tasks from a single database using mapped property names
@@ -35,51 +41,42 @@ export async function fetchTasksFromDatabase(db: NotionDatabase) {
   });
 }
 
-// Fetch tasks from ALL discovered databases (merged + sorted)
-export async function fetchNotionTasks(databases?: NotionDatabase[]) {
-  const dbs = databases || await discoverDatabases();
+// 2. Cache the main task fetching logic
+// This allows navigations to instantly show the last known state while the server hydrates.
+export const fetchNotionTasks = unstable_cache(
+  async (databases?: NotionDatabase[]) => {
+    const dbs = databases || await discoverDatabases();
 
-  // Fetch tasks from all databases concurrently
-  const allTaskArrays = await Promise.all(
-    dbs.map(db => fetchTasksFromDatabase(db))
-  );
+    const allTaskArrays = await Promise.all(
+      dbs.map(db => fetchTasksFromDatabase(db))
+    );
 
-  // Merge all tasks into a single flat array
-  const tasks = allTaskArrays.flat();
+    const tasks = allTaskArrays.flat();
 
-  // Sort tasks chronologically by deadline.
-  // 1. "Done" tasks go to the very bottom.
-  // 2. Tasks with "No Deadline" go to the bottom of the active tasks.
-  return tasks.sort((a, b) => {
-    const aIsDone = a.status.toLowerCase() === "done";
-    const bIsDone = b.status.toLowerCase() === "done";
+    return tasks.sort((a, b) => {
+      const aIsDone = a.status.toLowerCase() === "done";
+      const bIsDone = b.status.toLowerCase() === "done";
 
-    // "Done" tasks always go to the bottom
-    if (aIsDone && !bIsDone) return 1;
-    if (!aIsDone && bIsDone) return -1;
+      if (aIsDone && !bIsDone) return 1;
+      if (!aIsDone && bIsDone) return -1;
 
-    // No deadline goes to the bottom of the current grouping
-    if (a.deadline === "No Deadline" && b.deadline !== "No Deadline") return 1;
-    if (b.deadline === "No Deadline" && a.deadline !== "No Deadline") return -1;
-    if (a.deadline === "No Deadline" && b.deadline === "No Deadline") return 0;
+      if (a.deadline === "No Deadline" && b.deadline !== "No Deadline") return 1;
+      if (b.deadline === "No Deadline" && a.deadline !== "No Deadline") return -1;
+      if (a.deadline === "No Deadline" && b.deadline === "No Deadline") return 0;
 
-    // Normal chronological sort
-    return new Date(a.deadline).getTime() - new Date(b.deadline).getTime();
-  });
-}
+      return new Date(a.deadline).getTime() - new Date(b.deadline).getTime();
+    });
+  },
+  ['notion-tasks'],
+  { revalidate: 60, tags: ['notion-tasks'] } // Cache for 60 seconds
+);
 
-// CREATE a task in a specific database using discovered property names
+// CREATE a task
 export async function createNotionTask(title: string, statusName: string, date?: string, databaseId?: string) {
   const dbs = await discoverDatabases();
+  const targetDb = databaseId ? dbs.find(db => db.id === databaseId) : dbs[0];
 
-  // If no databaseId provided, use the first discovered database as default
-  const targetDb = databaseId
-    ? dbs.find(db => db.id === databaseId)
-    : dbs[0];
-
-  if (!targetDb) {
-    return { success: false, error: "No Notion database found." };
-  }
+  if (!targetDb) return { success: false, error: "No Notion database found." };
 
   try {
     const parent = targetDb.dataSourceId
@@ -89,23 +86,18 @@ export async function createNotionTask(title: string, statusName: string, date?:
     const response = await notion.pages.create({
       parent: parent as any,
       properties: {
-        [targetDb.propNames.title]: {
-          title: [{ text: { content: title } }],
-        },
-        [targetDb.propNames.status]: {
-          [targetDb.propTypes.status]: { name: statusName },
-        } as any,
-        ...(date && {
-          [targetDb.propNames.date]: {
-            date: { start: date },
-          },
-        }),
+        [targetDb.propNames.title]: { title: [{ text: { content: title } }] },
+        [targetDb.propNames.status]: { [targetDb.propTypes.status]: { name: statusName } } as any,
+        ...(date && { [targetDb.propNames.date]: { date: { start: date } } }),
       },
     });
-    revalidatePath("/");
+
+    // Invalidate everything to ensure fresh data after mutation
+    revalidatePath("/dashboard", "page");
+    revalidatePath("/", "layout");
+
     return { success: true, data: response };
   } catch (error: any) {
-    console.error("Notion Create Error Details:", JSON.stringify(error, null, 2));
     const errorMessage = error?.body ? JSON.parse(error.body).message : error.message || "Unknown error";
     return { success: false, error: errorMessage };
   }
@@ -114,13 +106,11 @@ export async function createNotionTask(title: string, statusName: string, date?:
 // UPDATE a task
 export async function updateNotionTask(taskId: string, statusName?: string, date?: string, propNames?: { status: string; date: string }, propTypes?: { status: "status" | "select" }) {
   try {
-    // If we don't know the prop names, we have to fetch them for this page's database
     let statusProp = propNames?.status || "Status";
     let dateProp = propNames?.date || "Date";
     let statusType: "status" | "select" = propTypes?.status || "status";
 
     if (!propNames || !propTypes) {
-      // Find database ID first by retrieving the page
       const page: any = await notion.pages.retrieve({ page_id: taskId });
       const dbId = page.parent?.database_id;
       if (dbId) {
@@ -137,37 +127,33 @@ export async function updateNotionTask(taskId: string, statusName?: string, date
     const response = await notion.pages.update({
       page_id: taskId,
       properties: {
-        ...(statusName && {
-          [statusProp]: {
-            [statusType]: { name: statusName },
-          } as any,
-        }),
-        ...(date && {
-          [dateProp]: {
-            date: { start: date },
-          },
-        }),
+        ...(statusName && { [statusProp]: { [statusType]: { name: statusName } } as any }),
+        ...(date && { [dateProp]: { date: { start: date } } }),
       },
     });
-    revalidatePath("/");
+
+    revalidatePath("/dashboard", "page");
+    revalidatePath("/", "layout");
+
     return { success: true, data: response };
   } catch (error) {
-    console.error("Notion Update Error:", error);
     return { success: false, error };
   }
 }
 
-// DELETE (archive) a task
+// DELETE a task
 export async function deleteNotionTask(taskId: string) {
   try {
     const response = await notion.pages.update({
       page_id: taskId,
       archived: true,
     });
-    revalidatePath("/");
+
+    revalidatePath("/dashboard", "page");
+    revalidatePath("/", "layout");
+
     return { success: true, data: response };
   } catch (error) {
-    console.error("Notion Archive Error:", error);
     return { success: false, error };
   }
 }

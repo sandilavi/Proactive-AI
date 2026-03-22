@@ -2,7 +2,7 @@
 import { useState, useTransition, useRef, useEffect, useCallback } from "react";
 import { executeUserPrompt, confirmAction, getAgentSuggestion, NotionTask, AgentSuggestion, AgentResponse } from "@/app/actions/agent-actions";
 import { fetchNotionTasks, NotionDatabase } from "@/app/actions/notion-actions";
- import { X, List, Zap, Trash2, Calendar, CheckCircle2, AlertTriangle, Check, Bell, BellRing, Clock, Brain, Sparkles } from "lucide-react";
+ import { X, Zap, Trash2, AlertTriangle, Check, Bell, BellRing, Clock, Brain, Sparkles } from "lucide-react";
 
 // Proactive Notification Timer
 const NOTIFICATION_INTERVAL    = 5  * 60 * 1000; // 5 minutes
@@ -473,7 +473,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
   return (
     <div className="relative">
        {/* Top Button Row: Bell + Help */}
-       <div className="flex justify-end items-center gap-2 mb-4 pr-2 md:pr-4">
+       <div className="flex justify-end items-center gap-2 mb-2 pr-2 md:pr-4">
 
 
          {/* Notification Bell */}
@@ -490,15 +490,13 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
             }}
             className={`relative p-3.5 rounded-[1.25rem] transition-all duration-300 border cursor-pointer group hover:scale-105 z-20 ${
               showNotificationPanel && activeToasts.length > 0
-                ? "bg-blue-600 text-white border-blue-600 shadow-xl shadow-blue-200/50 ring-4 ring-blue-50" 
+                ? "bg-blue-600 text-white border-blue-600 shadow-xl shadow-md ring-4 ring-blue-50" 
                 : "bg-white text-slate-400 border-slate-200/60 hover:border-slate-300 hover:text-slate-600 hover:shadow-md"
             }`}
             title={activeToasts.length === 0 ? "No Notifications" : "Notification alerts"}
           >
             {/* Background Glow when Unread */}
-            {!showNotificationPanel && unreadCount > 0 && (
-               <div className="absolute -inset-1 bg-rose-500/20 rounded-[1.5rem] blur-md animate-pulse"></div>
-            )}
+            
             
             <div className="relative z-10 flex items-center justify-center">
                {activeToasts.length > 0 && unreadCount > 0 ? (
@@ -525,7 +523,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
            SOON:     { border: "border-blue-200/50 hover:border-blue-300 shadow-blue-100/50", bg: "bg-white/60 backdrop-blur-xl", iconColor: "text-blue-500", text: "text-blue-900", label: "Future Horizon", accent: "bg-blue-500" },
          };
          return (
-           <div className="flex flex-col gap-4 mb-8 animate-in slide-in-from-top-4 fade-in duration-700">
+           <div className="flex flex-col gap-4 mb-4 animate-in slide-in-from-top-4 fade-in duration-700">
              <div className="flex items-center justify-between mb-2 px-4 md:px-2">
                <div className="flex items-center gap-3">
                  <div className="w-8 h-[2px] bg-slate-300 rounded-full"></div>
@@ -602,12 +600,12 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
          <div className="bg-white/80 backdrop-blur-2xl border border-white/40 shadow-[0_32px_80px_-15px_rgba(0,0,0,0.08)] rounded-[3rem] overflow-hidden relative z-10 flex flex-col transition-all duration-700 hover:shadow-[0_45px_100px_-20px_rgba(0,0,0,0.12)] border-b-white/20">
            
            {/* Header with Source Badges: Refined Capsules */}
-           <div className="px-10 py-8 pb-4 flex flex-col gap-6">
+           <div className="px-8 py-5 pb-2 flex flex-col gap-4">
              <div className="flex flex-wrap items-center gap-3">
-               <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.25em] self-center mr-2 opacity-60">Connected Sources</span>
+               <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.25em] self-center mr-2 opacity-60">Sources</span>
                {databases.map(db => (
                  <div key={db.id} className="group relative flex items-center gap-2.5 bg-white/70 hover:bg-white border border-slate-100/80 px-4 py-2 rounded-full text-[10px] font-black text-slate-600 uppercase tracking-widest shadow-sm transition-all duration-300 cursor-default hover:scale-105 hover:border-blue-200">
-                   <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-50 group-hover:ring-blue-100 transition-all"></div>
+                   <div className="w-1.5 h-1.5 rounded-full bg-slate-400"></div>
                    {db.name}
                  </div>
                ))}
@@ -620,11 +618,10 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
              </div>
            </div>
 
-           <div className="px-10 py-8 pt-2">
+           <div className="px-8 py-6 pt-2">
              <form onSubmit={handleSubmit} className="flex flex-col gap-6">
                <div className="relative group/input">
-                 {/* Input Glow Effect */}
-                 <div className="absolute -inset-1 bg-gradient-to-r from-blue-500/0 via-blue-500/5 to-blue-500/0 rounded-[2rem] blur-xl opacity-0 group-focus-within/input:opacity-100 transition-opacity duration-700 pointer-events-none"></div>
+                 
                  
                  <input 
                    ref={inputRef} 
@@ -638,7 +635,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                  <button 
                    type="submit" 
                    disabled={isLoading || !prompt.trim()} 
-                   className="absolute right-3 top-3 bottom-3 px-4 bg-blue-600 hover:bg-black text-white rounded-[1rem] transition-all duration-300 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed shadow-lg shadow-blue-200/50 hover:shadow-black/20 flex items-center justify-center min-w-[56px]"
+                   className="absolute right-3 top-3 bottom-3 px-4 bg-slate-900 hover:bg-blue-600 text-white rounded-[1rem] transition-all duration-300 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed shadow-lg shadow-md hover:shadow-black/20 flex items-center justify-center min-w-[56px]"
                  >
                    {isLoading ? (
                      <div className="animate-spin h-6 w-6 border-3 border-white border-t-transparent rounded-full" />
@@ -816,7 +813,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                          <button 
                             onClick={handleConfirm} 
                             disabled={confirmLoading} 
-                            className={`flex-[2] py-4 rounded-2xl text-[13px] font-black text-white transition-all duration-500 cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2.5 shadow-xl uppercase tracking-[0.15em] ${pendingDecision.action === "DELETE" ? "bg-red-500 hover:bg-black shadow-red-200/50" : "bg-blue-600 hover:bg-black shadow-blue-200/50"}`}
+                            className={`flex-[2] py-4 rounded-2xl text-[13px] font-black text-white transition-all duration-500 cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2.5 shadow-xl uppercase tracking-[0.15em] ${pendingDecision.action === "DELETE" ? "bg-red-500 hover:bg-black shadow-red-200/50" : "bg-slate-900 hover:bg-blue-600 shadow-md"}`}
                          >
                            {confirmLoading ? (
                              <div className="animate-spin h-5 w-5 border-3 border-white border-t-transparent rounded-full" />
@@ -842,7 +839,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
             {suggestion && !message && !pendingDecision && status === "idle" && (() => {
                const pc = priorityConfig(suggestion.priority);
                return (
-                 <div className={`mt-8 rounded-[2rem] border overflow-hidden animate-in fade-in zoom-in-95 duration-700 ${pc.border} shadow-lg shadow-blue-100/5`}>
+                 <div className={`mt-4 rounded-[2rem] border overflow-hidden animate-in fade-in zoom-in-95 duration-700 ${pc.border} shadow-sm bg-white`}>
                    <div className={`px-6 py-3.5 flex items-center gap-3 border-b ${pc.headerBg}`}>
                      <Sparkles size={14} className={pc.iconColor} />
                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Strategy Insight</span>
@@ -976,17 +973,8 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
             <div className="flex items-center gap-5">
                <div className="flex items-center gap-2">
                  <div className="w-1 h-1 bg-blue-500 rounded-full"></div>
-                 {databaseCount} Databases
+                 {databaseCount} Databases Connected
                </div>
-               <div className="flex items-center gap-2">
-                 <div className="w-1 h-1 bg-green-500 rounded-full"></div>
-                 Live Sync
-               </div>
-            </div>
-            <div className="flex items-center gap-3 lowercase font-medium tracking-normal text-[11px] text-slate-500">
-               <span>Processed via <span className="text-slate-800 font-bold uppercase tracking-wider text-[9px]">Llama-3-Refined</span></span>
-               <div className="h-3 w-[1px] bg-slate-200"></div>
-               <span>Powered by <span className="text-slate-800 font-bold uppercase tracking-wider text-[9px]">Qwen 2.5 Max</span></span>
             </div>
           </div>
         </div>

@@ -8,23 +8,29 @@ import {
   Clock, 
   Loader2, 
   TrendingUp, 
-  Calendar as CalendarIcon,
-  ChevronRight,
   Target
 } from 'lucide-react';
 import { getCapacityInsights, CapacityReport, CapacityInsight, NotionTask } from "@/app/actions/agent-actions";
 
 interface StrategyViewProps {
   tasks: NotionTask[];
+  initialReport?: CapacityReport | null;
 }
 
-export default function StrategyView({ tasks }: StrategyViewProps) {
-  const [report, setReport] = useState<CapacityReport | null>(null);
-  const [loading, setLoading] = useState(true);
+export default function StrategyView({ tasks, initialReport }: StrategyViewProps) {
+  const [report, setReport] = useState<CapacityReport | null>(initialReport || null);
+  const [loading, setLoading] = useState(!initialReport);
 
   useEffect(() => {
+    // Only fetch if we don't have an initial report or if tasks changed significantly
     const fetchInsights = async () => {
-      setLoading(true);
+      // If we already have a report and tasks haven't changed, skip loading state
+      if (report && !loading) {
+         // Keep existing report while updating in background to avoid flicker
+      } else {
+         setLoading(true);
+      }
+
       try {
         const now = new Date();
         const offsetMinutes = -now.getTimezoneOffset();
@@ -42,12 +48,12 @@ export default function StrategyView({ tasks }: StrategyViewProps) {
       }
     };
 
-    if (tasks.length > 0) {
+    if (tasks.length > 0 && !initialReport) {
       fetchInsights();
-    } else {
+    } else if (tasks.length === 0) {
       setLoading(false);
     }
-  }, [tasks]);
+  }, [tasks, initialReport]);
 
   if (loading) {
     return (
@@ -72,10 +78,9 @@ export default function StrategyView({ tasks }: StrategyViewProps) {
    return (
     <div className="space-y-10 animate-in fade-in zoom-in-95 duration-1000">
       {/* Top Header Card: Cinematic Strategy Overlook */}
-      <div className="bg-gradient-to-br from-purple-600 via-indigo-800 to-black rounded-[3.5rem] p-12 text-white shadow-2xl shadow-purple-200/40 relative overflow-hidden group">
+      <div className="bg-slate-900 rounded-[3.5rem] p-12 text-white shadow-xl relative overflow-hidden group">
          {/* Animated Grid Overlay */}
          <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10 mix-blend-overlay"></div>
-         <div className="absolute -top-24 -left-24 w-96 h-96 bg-purple-500/20 rounded-full blur-[100px] animate-pulse"></div>
 
          <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-10">
             <div className="space-y-6 max-w-2xl">
@@ -111,7 +116,7 @@ export default function StrategyView({ tasks }: StrategyViewProps) {
           
           return (
             <div key={idx} className={`bg-white/70 backdrop-blur-xl rounded-[2.5rem] border border-slate-100 p-10 shadow-sm transition-all duration-500 hover:shadow-[0_40px_80px_-20px_rgba(0,0,0,0.08)] hover:-translate-y-2 relative overflow-hidden flex flex-col group ${isOverload ? 'border-b-rose-200' : 'border-b-slate-200/50'}`}>
-               {isOverload && <div className="absolute top-0 left-0 w-full h-2 bg-rose-500 animate-pulse" />}
+               {isOverload && <div className="absolute top-0 left-0 w-full h-2 bg-rose-500" />}
                
                <div className="flex items-center justify-between mb-8">
                   <div className="flex flex-col">
