@@ -98,7 +98,7 @@ export default function Sidebar() {
           href="/" 
           className="flex items-center justify-center gap-3 w-full py-4 rounded-[1.5rem] bg-slate-50 hover:bg-rose-50 text-slate-500 hover:text-rose-600 border border-slate-100 hover:border-rose-100 transition-all duration-300 group cursor-pointer"
         >
-          <LogOut size={18} strokeWidth={3} className="text-slate-400 group-hover:text-rose-500 group-hover:-translate-x-1 transition-all" />
+          <LogOut size={18} strokeWidth={3} className="text-slate-400 group-hover:text-rose-500 transition-all" />
           <span className="text-[12px] font-black uppercase tracking-[0.2em]">Logout</span>
         </Link>
       </div>

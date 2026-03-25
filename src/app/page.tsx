@@ -7,9 +7,6 @@ export default function LandingPage() {
       
       {/* Premium Background Elements */}
       <div className="fixed top-0 left-0 w-full h-full pointer-events-none z-0">
-         
-         
-         
       </div>
 
       {/* Navigation: Industrial Precision */}
@@ -119,9 +116,6 @@ export default function LandingPage() {
         <section className="max-w-6xl mx-auto px-10 py-32 relative text-center">
            <div className="bg-slate-900 rounded-[4rem] p-24 relative overflow-hidden border border-slate-800">
               {/* Background Accents */}
-              
-              
-              
               <div className="relative z-10 flex flex-col items-center gap-10">
                  <div className="inline-flex items-center gap-3 text-blue-400 text-[11px] font-black uppercase tracking-[0.5em] mb-4">
                     <Target size={16} /> Ready for Deployment

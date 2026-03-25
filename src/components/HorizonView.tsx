@@ -40,7 +40,7 @@ export default function HorizonView() {
          {/* Background Decoration */}
          <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-br from-indigo-500/10 to-transparent rounded-bl-full opacity-50 pointer-events-none transition-all duration-700 group-hover:scale-110 group-hover:rotate-6"></div>
          
-         <div className="relative z-10 space-y-6 max-w-3xl">
+         <div className="relative z-10 space-y-6">
             <div className="space-y-2">
                <h2 className="text-3xl font-black text-slate-800 tracking-tight flex items-center gap-3">
                   <div className="p-2 bg-indigo-600 rounded-2xl text-white shadow-lg shadow-indigo-200">
@@ -61,7 +61,7 @@ export default function HorizonView() {
                     type="text" 
                     value={goal}
                     onChange={(e) => setGoal(e.target.value)}
-                    placeholder="e.g. Architect a SaaS platform using Next.js 15 and Supabase"
+                    placeholder="e.g. Draft a plan to make a commercial website within 2 weeks"
                     className="relative w-full p-6 pr-16 rounded-[1.2rem] border border-slate-200/60 outline-none transition-all duration-500 focus:border-indigo-500/30 focus:bg-white focus:ring-4 focus:ring-indigo-500/5 bg-slate-50/50 text-slate-800 font-bold placeholder:text-slate-400 placeholder:font-medium text-lg leading-tight"
                     disabled={loading}
                  />
@@ -135,7 +135,7 @@ export default function HorizonView() {
                            </div>
                            <div className="flex items-center gap-2 text-[11px] font-black text-slate-500 bg-slate-50 px-4 py-2 rounded-full border border-slate-100 shadow-sm group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors uppercase tracking-widest">
                               <Clock size={14} className="text-indigo-400" /> 
-                              {task.estimatedHours}h Energy Reqd
+                                 Estimated Time: {task.estimatedHours}h
                            </div>
                         </div>
                         

@@ -9,7 +9,7 @@ export default async function HorizonPage() {
         <h1 className="text-3xl font-black text-slate-800 tracking-tight">
           Focus <span className="text-indigo-600">Horizon</span>
         </h1>
-        <p className="text-sm font-medium text-slate-400">Instantly break down high-level project goals into an actionable 14-day roadmap.</p>
+        <p className="text-sm font-medium text-slate-400">Instantly break down high-level project goals into an actionable roadmap.</p>
       </div>
 
       <HorizonView />

@@ -614,6 +614,7 @@ export const getCapacityInsights = unstable_cache(
 
     const response = await groq.chat.completions.create({
       model: GROQ_MODEL,
+      temperature: 0,
       messages: [
         {
           role: "system",
@@ -622,9 +623,9 @@ export const getCapacityInsights = unstable_cache(
           
           RULES:
           1. Group tasks by date.
-          2. Estimate "Completion Hours" for each task based on complexity (0.5h for quick errands, 1-2h for medium sized tasks, 3-5h for deep work).
-          3. Thresholds: SAFE (<6h per day), BUSY (6-8h per day), OVERLOADED (>8h per day).
-          4. For OVERLOADED days, identify the heaviest task and suggest moving it to a nearby day with capacity.
+          2. Estimate "Completion Hours" for each task based on complexity (0.0-2.0h for quick tasks, 2.0-4.0h for medium sized tasks, 4.0-8.0h for deep work).
+          3. Thresholds: SAFE (<8h per day), BUSY (8-10h per day), OVERLOADED (>10h per day).
+          4. For BUSY and OVERLOADED days, identify the heaviest task and suggest moving it to a nearby day with capacity.
           
           OUTPUT strict JSON:
           {
@@ -645,131 +646,8 @@ export const getCapacityInsights = unstable_cache(
   { revalidate: 3600, tags: ['notion-tasks'] }
 );
 
-// ---------------------------------------------------------------------------
-// Growth Lab: RPG-style Skill Tracking
-// ---------------------------------------------------------------------------
-export interface SkillInsight {
-  skillName: string;
-  xp: number; // based on estimated hours
-  level: number;
-  recentTasks: string[];
-}
 
-export interface GrowthReport {
-  skills: SkillInsight[];
-  topSkill: string;
-  summary: string;
-}
-
-export const getGrowthInsights = unstable_cache(
-  async (tasks: NotionTask[]): Promise<GrowthReport> => {
-    const taskContext = tasks
-      .map(t => `- Name: "${t.name}", Status: "${t.status}"`)
-      .join("\n");
-
-    if (!taskContext) {
-      return { skills: [], topSkill: "None", summary: "Your skill tree is waiting to grow! Start adding tasks." };
-    }
-
-    const response = await groq.chat.completions.create({
-      model: GROQ_MODEL,
-      messages: [
-        {
-          role: "system",
-          content: `You are The Growth Lab AI. Analyze the user's tasks and create an RPG-style "Skill Tree".
-          
-          RULES:
-          1. Categorize tasks into broad skills (e.g., "Frontend", "Backend", "Design", "Writing", "Management", "Life/Chores").
-          2. Assign XP to each skill based on estimated effort (roughly 1 XP = 1 hour).
-          3. Calculate a level for each skill: Level = Math.floor(XP / 10) + 1.
-          4. Provide the names of 2-3 recent tasks that contributed to this skill.
-          5. Identify the "topSkill" (the one with the most XP).
-          6. Write a short, motivating summary celebrating their progress (e.g., "You spent 15 hours on Backend this week. You're becoming a specialist!").
-          
-          OUTPUT strict JSON:
-          {
-            "skills": [
-              { "skillName": "String", "xp": Number, "level": Number, "recentTasks": ["task1", "task2"] }
-            ],
-            "topSkill": "String",
-            "summary": "String"
-          }`
-        },
-        { role: "user", content: `Existing Tasks:\n${taskContext}` }
-      ]
-    });
-
-    const raw = response.choices[0]?.message?.content || "";
-    return extractJSON<GrowthReport>(raw) || { skills: [], topSkill: "None", summary: "Could not generate growth report." };
-  },
-  ['growth-insights'],
-  { revalidate: 3600, tags: ['notion-tasks'] }
-);
-
-// ---------------------------------------------------------------------------
-// Productivity Pulse: Predictive Analytics
-// ---------------------------------------------------------------------------
-export interface PulseTrend {
-  trendName: string;
-  metric: string;
-  description: string;
-  isPositive: boolean;
-}
-
-export interface PulseReport {
-  overallScore: number; // 0-100
-  summary: string;
-  trends: PulseTrend[];
-  recommendation: string;
-}
-
-export const getPulseInsights = unstable_cache(
-  async (tasks: NotionTask[]): Promise<PulseReport> => {
-    const taskContext = tasks
-      .map(t => `- Name: "${t.name}", Status: "${t.status}", Deadline: "${t.deadline}"`)
-      .join("\n");
-
-    if (!taskContext) {
-      return { overallScore: 0, summary: "No data available yet.", trends: [], recommendation: "Add tasks to see your pulse." };
-    }
-
-    const response = await groq.chat.completions.create({
-      model: GROQ_MODEL,
-      messages: [
-        {
-          role: "system",
-          content: `You are The Productivity Pulse AI. Analyze the user's task list (status, deadlines) and generate predictive analytics.
-          
-          RULES:
-          1. Calculate a realistic 'overallScore' (0-100) representing their workflow health (e.g., lots of overdue = lower score).
-          2. Identify 3-4 distinct 'trends' in their habits (e.g., "Overestimating Fridays", "Strong finish rate", "Heavy backlog").
-          3. Determine if each trend isPositive (boolean).
-          4. Give a strong, actionable recommendation for the upcoming days.
-          
-          OUTPUT strict JSON:
-          {
-            "overallScore": Number,
-            "summary": "String",
-            "trends": [
-              { "trendName": "String", "metric": "String (e.g. '+20%')", "description": "String", "isPositive": Boolean }
-            ],
-            "recommendation": "String"
-          }`
-        },
-        { role: "user", content: `Tasks:\n${taskContext}` }
-      ]
-    });
-
-    const raw = response.choices[0]?.message?.content || "";
-    return extractJSON<PulseReport>(raw) || { overallScore: 50, summary: "Analysis failed.", trends: [], recommendation: "" };
-  },
-  ['pulse-insights'],
-  { revalidate: 3600, tags: ['notion-tasks'] }
-);
-
-// ---------------------------------------------------------------------------
 // Focus Horizon: Automatic Project Breakdown
-// ---------------------------------------------------------------------------
 export interface HorizonTaskEntry {
   dayOffset: number; // Day 1, Day 2, etc.
   title: string;

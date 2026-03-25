@@ -148,7 +148,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                   {insight.taskInsights?.map((t, tidx) => (
                     <div key={tidx} className="flex flex-col gap-1 border-l-2 border-slate-100 pl-5 py-1 group/item hover:border-blue-400 transition-colors">
                        <span className="text-sm font-bold text-slate-800 line-clamp-1 group-hover/item:text-blue-600 transition-colors tracking-tight leading-tight">{t.name}</span>
-                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mt-1">{t.estimatedHours}h Energy Reqd</span>
+                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mt-1">Estimated time: {t.estimatedHours}h</span>
                     </div>
                   ))}
                   {(!insight.taskInsights || insight.taskInsights.length === 0) && (
