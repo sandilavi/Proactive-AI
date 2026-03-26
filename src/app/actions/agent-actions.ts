@@ -595,9 +595,20 @@ export async function confirmAction(decision: AgentResponse) {
   };
 }
 
-// Strategic Intelligence: Analyze entire list for capacity overloads
-export const getCapacityInsights = unstable_cache(
-  async (tasks: NotionTask[], userOffset: string): Promise<CapacityReport> => {
+/** Strategic Intelligence Wrapper for Cache Consistency */
+export async function getCapacityInsights(tasks: NotionTask[], userOffset: string): Promise<CapacityReport> {
+  // SORT before join to ensure identity even if Notion API order changes
+  const taskFingerprint = [...tasks]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map(t => `${t.id}-${t.status}-${t.name}-${t.deadline}`)
+    .join("|");
+
+  // Use the fingerprint as the primary key for the cache
+  return getCachedCapacityInsights(taskFingerprint, tasks, userOffset);
+}
+
+const getCachedCapacityInsights = unstable_cache(
+  async (_fingerprint: string, tasks: NotionTask[], userOffset: string): Promise<CapacityReport> => {
     const [sign, h, m] = userOffset.match(/([+-])(\d{2}):(\d{2})/)?.slice(1) || ["+", "0", "0"];
     const offsetMs = (parseInt(h) * 60 + parseInt(m)) * 60000 * (sign === "+" ? 1 : -1);
     const localNow = new Date(new Date().getTime() + offsetMs);
@@ -640,7 +651,25 @@ export const getCapacityInsights = unstable_cache(
     });
 
     const raw = response.choices[0]?.message?.content || "";
-    return extractJSON<CapacityReport>(raw) || { insights: [], overallSummary: "Could not generate report." };
+    const report = extractJSON<CapacityReport>(raw);
+
+    if (report && report.insights) {
+      // PROACTIVELY FIX LLM MATH HALLUCINATIONS
+      report.insights = report.insights.map(day => {
+        if (day.taskInsights && day.taskInsights.length > 0) {
+          const actualTotal = day.taskInsights.reduce((sum, task) => sum + (task.estimatedHours || 0), 0);
+          return {
+            ...day,
+            totalHours: actualTotal,
+            // Re-verify status based on the accurate math
+            status: actualTotal > 10 ? "OVERLOADED" : actualTotal > 8 ? "BUSY" : "SAFE"
+          };
+        }
+        return day;
+      });
+    }
+
+    return report || { insights: [], overallSummary: "Could not generate report." };
   },
   ['strategy-insights'],
   { revalidate: 3600, tags: ['notion-tasks'] }

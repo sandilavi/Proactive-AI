@@ -22,7 +22,6 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
   const [loading, setLoading] = useState(!initialReport);
 
   useEffect(() => {
-    // Only fetch if we don't have an initial report or if tasks changed significantly
     const fetchInsights = async () => {
       // If we already have a report and tasks haven't changed, skip loading state
       if (report && !loading) {
@@ -39,8 +38,29 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
         const minutes = (Math.abs(offsetMinutes) % 60).toString().padStart(2, '0');
         const userOffset = `${sign}${hours}:${minutes}`;
 
-        const data = await getCapacityInsights(tasks, userOffset);
+        // If we're refreshing because of a signal, we need the latest task list first
+        const { fetchNotionTasks } = await import("@/app/actions/notion-actions");
+        const freshTasks = await fetchNotionTasks();
+        const data = await getCapacityInsights(freshTasks, userOffset);
         setReport(data);
+
+        // Sync to the Strategic Intelligence Hub in the header
+        if (typeof window !== "undefined" && data) {
+          const alerts = data.insights.filter(i => i.status === "BUSY" || i.status === "OVERLOADED");
+          // SORT before fingerprinting to match AgentEngine exactly
+          const currentFingerprint = [...freshTasks]
+            .sort((a, b) => a.id.localeCompare(b.id))
+            .map(t => `${t.id}-${t.status}-${t.name}-${t.deadline}`)
+            .join("|");
+          
+          localStorage.setItem("proactive_tasks_fingerprint", currentFingerprint);
+          localStorage.setItem("proactive_capacity_alerts", JSON.stringify({
+            alerts,
+            summary: data.overallSummary,
+            updatedAt: Date.now()
+          }));
+          window.dispatchEvent(new Event('capacity-alerts-updated'));
+        }
       } catch (err) {
         console.error("Strategy Insight Error:", err);
       } finally {
@@ -48,11 +68,18 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
       }
     };
 
+    // Listen for global task updates (e.g., from the Assistant)
+    const handleSync = () => fetchInsights();
+    window.addEventListener('notion-tasks-updated', handleSync);
+    
+    // Initial fetch if needed
     if (tasks.length > 0 && !initialReport) {
       fetchInsights();
     } else if (tasks.length === 0) {
       setLoading(false);
     }
+
+    return () => window.removeEventListener('notion-tasks-updated', handleSync);
   }, [tasks, initialReport]);
 
   if (loading) {
@@ -75,6 +102,8 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
     );
   }
 
+  const activeTasks = tasks.filter(t => t.status?.toLowerCase() !== "done");
+
    return (
     <div className="space-y-10 animate-in fade-in zoom-in-95 duration-1000">
       {/* Top Header Card: Cinematic Strategy Overlook */}
@@ -92,13 +121,13 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                </h2>
                <div className="flex gap-10 pt-4">
                   <div className="flex flex-col">
-                    <span className="text-[10px] font-black uppercase text-white/40 tracking-[0.3em] mb-2">Total Queue</span>
-                    <span className="text-3xl font-black tracking-tighter">{tasks.length} Operations</span>
+                    <span className="text-[10px] font-black uppercase text-white/40 tracking-[0.3em] mb-2">Active Queue</span>
+                    <span className="text-3xl font-black tracking-tighter">{activeTasks.length} Tasks</span>
                   </div>
                   <div className="flex flex-col border-l border-white/20 pl-8">
                     <span className="text-[10px] font-black uppercase text-white/40 tracking-[0.3em] mb-2">Critical Overloads</span>
                     <span className="text-3xl font-black tracking-tighter text-rose-400">
-                      {report.insights.filter(i => i.status === "OVERLOADED").length} Events
+                      {report.insights.filter(i => i.status === "OVERLOADED").length} Days
                     </span>
                   </div>
                </div>

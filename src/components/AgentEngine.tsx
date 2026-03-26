@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useCallback, useRef } from "react";
 import { fetchNotionTasks } from "@/app/actions/notion-actions";
+import { getCapacityInsights } from "@/app/actions/agent-actions";
 
 const NOTIFICATION_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
@@ -35,6 +36,7 @@ function classifyDeadline(deadline: string): ProactiveAlert["urgency"] | null {
 
 export default function AgentEngine() {
   const activeToastsRef = useRef<ProactiveAlert[]>([]);
+  const taskFingerprintRef = useRef<string>("");
 
   const fireOsNotification = useCallback((alert: ProactiveAlert) => {
     const urgencyLabel: Record<ProactiveAlert["urgency"], string> = {
@@ -135,12 +137,53 @@ export default function AgentEngine() {
           });
         }
 
+        // 2. Performance Tracking: Check if tasks changed since last sync
+        // SORT before join to ensure identity even if Notion API order changes
+        const currentFingerprint = [...tasks]
+          .sort((a, b) => a.id.localeCompare(b.id))
+          .map(t => `${t.id}-${t.status}-${t.name}-${t.deadline}`)
+          .join("|");
+          
+        const tasksActuallyChanged = taskFingerprintRef.current !== "" && taskFingerprintRef.current !== currentFingerprint;
+        taskFingerprintRef.current = currentFingerprint;
+
         // Global Sync: Sort so most recent is at the top
         const sorted = [...urgentAlerts].sort((a, b) => (b.alertedAt || 0) - (a.alertedAt || 0));
         localStorage.setItem("proactive_active_toasts", JSON.stringify(sorted));
+        
+        // Signal that new alerts are ready
         window.dispatchEvent(new Event('notifications-updated'));
         
+        // If the task list itself changed (e.g. data modified in Notion app), signal the Strategy/Dashboard pages
+        if (tasksActuallyChanged) {
+          window.dispatchEvent(new Event('notion-tasks-updated'));
+        }
+        
         activeToastsRef.current = sorted;
+
+        // 3. Strategic Capacity Monitor: Detect burnout risk
+        const storedFingerprint = localStorage.getItem("proactive_tasks_fingerprint");
+        
+        // ONLY call the AI if the tasks have actually changed since the last saved report
+        if (currentFingerprint !== storedFingerprint) {
+            const offsetMinutes = -now.getTimezoneOffset();
+            const sign = offsetMinutes >= 0 ? '+' : '-';
+            const hours = Math.floor(Math.abs(offsetMinutes) / 60).toString().padStart(2, '0');
+            const minutes = (Math.abs(offsetMinutes) % 60).toString().padStart(2, '0');
+            const userOffset = `${sign}${hours}:${minutes}`;
+
+            const report = await getCapacityInsights(tasks, userOffset);
+            if (report && report.insights) {
+                const alerts = report.insights.filter(i => i.status === "BUSY" || i.status === "OVERLOADED");
+                localStorage.setItem("proactive_tasks_fingerprint", currentFingerprint);
+                localStorage.setItem("proactive_capacity_alerts", JSON.stringify({
+                    alerts,
+                    summary: report.overallSummary,
+                    updatedAt: Date.now()
+                }));
+                window.dispatchEvent(new Event('capacity-alerts-updated'));
+            }
+        }
 
       } catch (err) {
         console.error("AgentEngine Sync Error:", err);

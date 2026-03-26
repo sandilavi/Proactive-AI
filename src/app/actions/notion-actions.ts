@@ -41,9 +41,12 @@ export async function fetchTasksFromDatabase(db: NotionDatabase) {
   });
 }
 
-// 2. Cache the main task fetching logic
-// This allows navigations to instantly show the last known state while the server hydrates.
-export const fetchNotionTasks = unstable_cache(
+import { cache } from "react";
+
+// Fetch fresh Notion tasks on every request
+// We use React.cache instead of unstable_cache so that it's 100% fresh
+// but still deduplicated if multiple components call it in one page load.
+export const fetchNotionTasks = cache(
   async (databases?: NotionDatabase[]) => {
     const dbs = databases || await discoverDatabases();
 
@@ -66,9 +69,7 @@ export const fetchNotionTasks = unstable_cache(
 
       return new Date(a.deadline).getTime() - new Date(b.deadline).getTime();
     });
-  },
-  ['notion-tasks'],
-  { revalidate: 60, tags: ['notion-tasks'] } // Cache for 60 seconds
+  }
 );
 
 // CREATE a task

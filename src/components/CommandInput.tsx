@@ -289,6 +289,8 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
           setTaskList(data.tasks ?? null);
           setStatus("success");
           setPrompt("");
+          // Dispatch global signal that data changed
+          window.dispatchEvent(new Event('notion-tasks-updated'));
         } else {
           setMessage(data.message || "Something went wrong");
           setTaskList(data.tasks ?? null);
@@ -309,6 +311,11 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
       setMessage(result.message);
       setTaskList(result.tasks ?? null);
       setStatus(result.success ? "success" : "error");
+      
+      if (result.success) {
+        // Dispatch global signal that data changed
+        window.dispatchEvent(new Event('notion-tasks-updated'));
+      }
     } catch {
       setStatus("error");
       setMessage("Failed to execute action.");
