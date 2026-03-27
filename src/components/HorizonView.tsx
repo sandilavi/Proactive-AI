@@ -8,20 +8,26 @@ import {
   Loader2,
   ArrowRight,
   Layers,
-  Sparkles
+  Sparkles,
+  Check
 } from 'lucide-react';
 import { generateHorizonRoadmap, HorizonRoadmap } from "@/app/actions/agent-actions";
+import { batchCreateNotionTasks } from "@/app/actions/notion-actions";
 
 export default function HorizonView() {
   const [goal, setGoal] = useState("");
   const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [roadmap, setRoadmap] = useState<HorizonRoadmap | null>(null);
+  const [thinkOpen, setThinkOpen] = useState(false);
+  const [syncSuccess, setSyncSuccess] = useState(false);
 
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!goal.trim() || loading) return;
     setLoading(true);
     setRoadmap(null);
+    setSyncSuccess(false);
     try {
       const data = await generateHorizonRoadmap(goal);
       setRoadmap(data);
@@ -29,6 +35,28 @@ export default function HorizonView() {
       console.error("Horizon Generation Error:", err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleExport = async () => {
+    if (!roadmap || syncing || syncSuccess) return;
+    setSyncing(true);
+    try {
+      const tasksToSync = roadmap.tasks.map(t => ({
+        title: t.title,
+        date: t.date
+      }));
+      const res = await batchCreateNotionTasks(tasksToSync);
+      if (res.success) {
+        setSyncSuccess(true);
+        setTimeout(() => setSyncSuccess(false), 5000); // Reset after 5s
+      } else {
+        alert("Export failed: " + res.error);
+      }
+    } catch (err) {
+      console.error("Export Error:", err);
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -87,9 +115,9 @@ export default function HorizonView() {
              {/* Animated Overlay */}
              <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10 mix-blend-overlay"></div>
              
-             <div className="relative z-10 max-w-2xl">
+             <div className="relative z-10 w-full mb-8">
                <div className="inline-flex items-center gap-2.5 bg-white/10 backdrop-blur-xl px-5 py-2.5 rounded-full text-[11px] font-black uppercase tracking-[0.25em] border border-white/10 mb-6 shadow-2xl">
-                  <Sparkles size={14} className="text-indigo-400" /> Strategic Blueprint
+                  <Sparkles size={14} className="text-indigo-400" /> Horizon Blueprint
                </div>
                <h3 className="text-4xl font-black leading-tight tracking-tighter mb-6 bg-clip-text text-transparent bg-gradient-to-r from-white via-white to-white/60">
                  {roadmap.projectTitle}
@@ -98,6 +126,35 @@ export default function HorizonView() {
                  {roadmap.summary}
                </p>
              </div>
+
+             {roadmap.thinkContext && (
+               <div className="mt-8 pt-6 border-t border-white/10 relative z-10 w-full">
+                 <button
+                   type="button"
+                   onClick={() => setThinkOpen(!thinkOpen)}
+                   className="flex items-center gap-2 text-[10px] font-black text-indigo-300/60 hover:text-indigo-300 transition-all uppercase tracking-[0.2em] cursor-pointer"
+                 >
+                   <Zap size={12} className={thinkOpen ? "text-indigo-400" : ""} />
+                   <span>{thinkOpen ? "Collapse Intelligence" : "Expand Intelligence"}</span>
+                   <svg
+                     viewBox="0 0 24 24"
+                     fill="none"
+                     stroke="currentColor"
+                     strokeWidth="3"
+                     className={`w-2.5 h-2.5 transition-transform duration-500 ${thinkOpen ? "rotate-180" : "rotate-0 text-indigo-300/40"}`}
+                   >
+                     <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round"/>
+                   </svg>
+                 </button>
+                 {thinkOpen && (
+                   <div className="mt-5 pl-5 border-l-2 border-indigo-500/30 w-full">
+                     <p className="text-[11px] text-indigo-100/60 leading-relaxed whitespace-pre-wrap font-mono">
+                       {roadmap.thinkContext}
+                     </p>
+                   </div>
+                 )}
+               </div>
+             )}
              
              <div className="absolute top-12 right-12 flex flex-col items-end">
                 <div className="text-[10px] font-black uppercase tracking-[0.3em] text-white/40 mb-1">Duration</div>
@@ -117,8 +174,9 @@ export default function HorizonView() {
                   <div key={idx} className="relative group/task pl-20">
                      {/* Timeline Node: Custom Pill */}
                      <div className="absolute left-0 top-0 bottom-0 flex flex-col items-center">
-                        <div className="w-11 h-11 rounded-[1rem] bg-white border border-indigo-100 shadow-sm flex items-center justify-center text-[10px] font-black text-indigo-600 z-10 group-hover/task:bg-indigo-600 group-hover/task:text-white group-hover/task:scale-110 transition-all duration-500">
-                           {task.dayOffset}
+                        <div className="w-14 h-14 rounded-[1.2rem] bg-white border border-indigo-100 shadow-sm flex flex-col items-center justify-center text-indigo-600 z-10 group-hover/task:bg-indigo-600 group-hover/task:text-white group-hover/task:scale-110 transition-all duration-500">
+                           <span className="text-[9px] font-black uppercase tracking-widest opacity-80">{new Date(task.date).toLocaleDateString([], { month: 'short' })}</span>
+                           <span className="text-[14px] font-black leading-none mt-0.5">{new Date(task.date).getDate()}</span>
                         </div>
                      </div>
                      
@@ -135,16 +193,16 @@ export default function HorizonView() {
                            </div>
                            <div className="flex items-center gap-2 text-[11px] font-black text-slate-500 bg-slate-50 px-4 py-2 rounded-full border border-slate-100 shadow-sm group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors uppercase tracking-widest">
                               <Clock size={14} className="text-indigo-400" /> 
-                                 Estimated Time: {task.estimatedHours}h
+                                 Allocated Time: {task.durationHours}h
                            </div>
                         </div>
                         
                         <p className="text-base text-slate-500 leading-relaxed font-bold opacity-80 group-hover:opacity-100 transition-opacity">
-                          {task.description}
+                          {task.reason}
                         </p>
 
                         <div className="absolute top-8 right-8 text-[40px] font-black text-indigo-500/5 select-none pointer-events-none group-hover:text-indigo-500/10 transition-colors">
-                           0{task.dayOffset}
+                           {new Date(task.date).toLocaleDateString([], { weekday: 'short' }).toUpperCase()}
                         </div>
                      </div>
                   </div>
@@ -152,13 +210,27 @@ export default function HorizonView() {
              </div>
            </div>
            
-           <div className="pt-8 text-center">
-             <button className="inline-flex items-center gap-3 px-8 py-4 rounded-2xl bg-slate-50 text-[11px] font-black text-slate-400 uppercase tracking-[0.3em] hover:text-indigo-600 hover:bg-indigo-50 transition-all duration-500 group border border-slate-100/60" disabled>
-                <span>Directly Export to Notion</span>
-                <div className="px-2 py-0.5 rounded-md bg-white border border-slate-100 text-[8px]">Coming Soon</div>
-                <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
-             </button>
-           </div>
+            <div className="pt-10 text-center relative z-10">
+              <button 
+                onClick={handleExport}
+                disabled={syncing || syncSuccess}
+                className={`inline-flex items-center gap-3 px-12 py-5 rounded-[1.5rem] font-black uppercase tracking-[0.3em] transition-all duration-700 group border text-[11px] shadow-2xl ${syncSuccess ? "bg-emerald-50 text-emerald-600 border-emerald-100" : "bg-slate-900 text-white border-slate-800 hover:bg-blue-600 hover:-translate-y-1 active:scale-95"}`}
+              >
+                 {syncing ? (
+                    <Loader2 size={16} className="animate-spin text-blue-400" />
+                 ) : syncSuccess ? (
+                    <div className="flex items-center gap-2">
+                       <Check size={16} strokeWidth={3} />
+                       <span>Export Complete</span>
+                    </div>
+                 ) : (
+                    <div className="flex items-center gap-3">
+                       <span>Deploy Blueprint to Notion</span>
+                       <ArrowRight size={16} className="group-hover:translate-x-1.5 transition-transform" />
+                    </div>
+                 )}
+              </button>
+            </div>
         </div>
       )}
     </div>

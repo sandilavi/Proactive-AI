@@ -1,7 +1,7 @@
 "use server";
 
 import { notion, getRawNotionTasks, discoverDatabases as rawDiscoverDatabases, NotionDatabase } from "@/lib/notion";
-import { revalidatePath, unstable_cache, revalidateTag } from "next/cache";
+import { revalidatePath, unstable_cache } from "next/cache";
 
 interface NotionPage {
   id: string;
@@ -156,5 +156,40 @@ export async function deleteNotionTask(taskId: string) {
     return { success: true, data: response };
   } catch (error) {
     return { success: false, error };
+  }
+}
+
+// BATCH CREATE tasks from Horizon
+export async function batchCreateNotionTasks(tasks: { title: string; date: string }[]) {
+  const dbs = await discoverDatabases();
+  const targetDb = dbs[0];
+
+  if (!targetDb) return { success: false, error: "No Notion database found." };
+
+  try {
+    const results = await Promise.all(
+      tasks.map(task => {
+        const parent = targetDb.dataSourceId
+          ? { data_source_id: targetDb.dataSourceId }
+          : { database_id: targetDb.id };
+
+        return notion.pages.create({
+          parent: parent as any,
+          properties: {
+            [targetDb.propNames.title]: { title: [{ text: { content: task.title } }] },
+            [targetDb.propNames.status]: { [targetDb.propTypes.status]: { name: "Not Started" } } as any,
+            [targetDb.propNames.date]: { date: { start: task.date } },
+          },
+        });
+      })
+    );
+
+    revalidatePath("/dashboard", "page");
+    revalidatePath("/", "layout");
+
+    return { success: true, count: results.length };
+  } catch (error: any) {
+    const errorMessage = error?.body ? JSON.parse(error.body).message : error.message || "Unknown error during batch export";
+    return { success: false, error: errorMessage };
   }
 }

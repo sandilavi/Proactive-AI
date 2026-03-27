@@ -13,11 +13,12 @@ export default function DashboardLayout({
     <div className="flex h-screen bg-[#fcfcfd] relative overflow-hidden">
       {/* Global Background Intelligence Engine */}
       <AgentEngine />
-      {/* Premium Background Elements */}
-      <div className="fixed top-0 left-0 w-full h-full pointer-events-none z-0">
-         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-50/50 rounded-full blur-[120px]"></div>
-         <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-indigo-50/50 rounded-full blur-[120px]"></div>
-      </div>
+       {/* Premium Background Elements */}
+       <div className="fixed top-0 left-0 w-full h-full pointer-events-none z-0">
+          <div className="absolute top-[-15%] left-[-15%] w-[50%] h-[50%] bg-blue-200/20 rounded-full blur-[160px] animate-pulse duration-[10s]"></div>
+          <div className="absolute bottom-[-15%] right-[-15%] w-[50%] h-[50%] bg-indigo-200/20 rounded-full blur-[160px] animate-pulse duration-[12s]"></div>
+          <div className="absolute top-[20%] right-[10%] w-[30%] h-[30%] bg-rose-100/10 rounded-full blur-[120px]"></div>
+       </div>
 
       <Sidebar />
       <div className="flex-1 flex flex-col h-screen overflow-hidden">

@@ -1,7 +1,6 @@
 "use server";
 import { groq, GROQ_MODEL } from "@/lib/groq";
 import { fetchNotionTasks } from "./notion-actions";
-import { unstable_cache } from "next/cache";
 
 export interface NotionTask {
   id: string;
@@ -48,11 +47,15 @@ export interface CapacityInsight {
   status: "SAFE" | "BUSY" | "OVERLOADED";
   taskInsights?: Array<{ name: string; estimatedHours: number }>;
   suggestion?: string;
+  // Structured fields for the Accept/Reject action buttons
+  mitigationTaskName?: string;   // The exact task name to move
+  mitigationTargetDate?: string; // ISO date string "YYYY-MM-DD" to move it to
 }
 
 export interface CapacityReport {
   insights: CapacityInsight[];
   overallSummary: string;
+  thinkContext?: string;
 }
 
 
@@ -75,7 +78,10 @@ function extractJSON<T>(raw: string): T | null {
 
     const jsonString = clean.substring(firstBrace, lastBrace + 1);
     return JSON.parse(jsonString) as T;
-  } catch {
+  } catch (e) {
+    const fs = require('fs');
+    fs.writeFileSync('json-error.txt', String(e) + '\nSnippet: ' + raw.substring(0, 100), { flag: 'a' });
+    console.error("Agent JSON Parsing Failed. LLM output snippet:", String(e));
     return null;
   }
 }
@@ -236,7 +242,7 @@ export async function processUserPrompt(prompt: string, taskContext: string, use
   const today = localNow.toISOString().split("T")[0];
 
   const dbListStr = databaseNames.length > 0
-    ? `\n\nAVAILABLE DATABASES: ${databaseNames.map(n => `"${n}"`).join(", ")}\n- For CREATE/PLAN: pick the most logical database based on the task context. Set "targetDatabase" to the exact database name.\n- For UPDATE/DELETE: the taskId is globally unique, no database routing needed.`
+    ? `\n\nAVAILABLE DATABASES: ${databaseNames.map(n => `"${n}"`).join(", ")}\n- For CREATE: pick the most logical database based on the task context. Set "targetDatabase" to the exact database name.\n- For UPDATE/DELETE: the taskId is globally unique, no database routing needed.`
     : "";
 
   const response = await groq.chat.completions.create({
@@ -254,14 +260,9 @@ export async function processUserPrompt(prompt: string, taskContext: string, use
         - READ: List / view tasks.
         - UPDATE: Modify task properties. Extract: taskId, status, date.
         - DELETE: Remove task. Extract: taskId.
-        - SUGGEST: Prioritization advice (e.g. "what is urgent?").
-        - PLAN: Perform "Time-Based Capacity Planning" to generate a sequential roadmap of 3 - 6 logical subtasks.
-          - 8-HOUR DAILY CAPACITY: Each day has a hard limit of 8 hours of productive work.
-          - ESTIMATED COMPLETION TIME (ECT): Estimate hours for EXISTING TASKS based on complexity (e.g. 0.5h for quick tasks, 1-2h for medium sized tasks etc).
-          - SEQUENTIAL PACKING: Assign an estimated duration (hours) to each new subtask. Schedule subtasks on days where the total (Existing Tasks + New Subtasks) does not exceed 8 hours. Skip any day at/above capacity.
-          - NEVER use a Task ID as a title. Extract: a concise 'planSummary'(1 - 2 sentences) providing a "Time-Based Feasibility Analysis" (e.g., "I scheduled Step 2 on Tuesday because your existing tasks take 3 hours, leaving 5 hours of capacity from your 8-hour daily limit"), targetDatabase, and an array of subtasks with title, date, durationHours, and reason in the 'plan' array.
+        - SUGGEST: Prioritization advice (e.g. "what is urgent?", "what should I focus on?").
         - UNCLEAR: UPDATE / DELETE intent but no task confidently matches. Set attemptedName.
-        - OTHER: Non task topics.
+        - OTHER: Non task topics. If the user asks to plan, build a roadmap, or schedule steps for a goal, return OTHER.
 
         DATE RULES:
         - Only include date / time if user explicitly mentions it. Never assume today or midnight.
@@ -270,16 +271,14 @@ export async function processUserPrompt(prompt: string, taskContext: string, use
 
         MATCHING(UPDATE / DELETE):
         - Match by core keywords, case -insensitive, ignore filler words("a", "the", "an").
-        - Only match if exactly ONE task clearly fits.Ambiguous / no match → UNCLEAR.
+        - Only match if exactly ONE task clearly fits. Ambiguous / no match → UNCLEAR.
         - Use exact taskId from the task list.
 
         OUTPUT(strict JSON):
         {
-          "action": "CREATE | READ | UPDATE | DELETE | SUGGEST | PLAN | UNCLEAR | OTHER",
-            "data": {
-            "taskId": "", "status": "", "title": "", "date": "", "attemptedName": "", "targetDatabase": "",
-              "planSummary": "Short feasibility analysis here",
-                "plan": [{ "title": "", "date": "", "durationHours": 0, "reason": "" }]
+          "action": "CREATE | READ | UPDATE | DELETE | SUGGEST | UNCLEAR | OTHER",
+          "data": {
+            "taskId": "", "status": "", "title": "", "date": "", "attemptedName": "", "targetDatabase": ""
           }
         } `,
       },
@@ -343,21 +342,16 @@ export async function performNotionCRUD(
     if (!data.plan || data.plan.length === 0) {
       return { success: false, message: "No plan provided." };
     }
-
-    const results = [];
-    const targetDbId = resolveDbId(data.targetDatabase);
-    for (const task of data.plan) {
-      const title = (task.title ?? "").trim() || "New Task";
-      // Default to not started
-      const status = normalizeStatus("Not started");
-      results.push(await createNotionTask(title, status, task.date, targetDbId));
-    }
-
-    const allSuccess = results.every(r => r.success);
+    const { batchCreateNotionTasks } = await import("./notion-actions");
+    const tasksToSync = data.plan.map(t => ({
+      title: t.title,
+      date: t.date || ""
+    }));
+    const result = await batchCreateNotionTasks(tasksToSync);
     return {
-      success: allSuccess,
-      message: allSuccess ? `Successfully created ${results.length} tasks for your plan.` : "Failed to create some tasks in the plan.",
-      data: results,
+      success: result.success,
+      message: result.success ? `Successfully deployed ${result.count} tasks from your blueprint.` : "Blueprint deployment failed.",
+      data: result,
     };
   }
 
@@ -481,6 +475,24 @@ export async function executeUserPrompt(prompt: string, userOffset: string = "+0
     };
   }
   else if (cleanDecision.action === "OTHER") {
+    // Check if the user is asking for a roadmap/plan — delegate to generateHorizonRoadmap
+    const planKeywords = ["plan", "roadmap", "schedule", "steps for", "build a plan", "create a plan", "how do i", "how to"];
+    const isPlanIntent = planKeywords.some(kw => prompt.toLowerCase().includes(kw));
+    if (isPlanIntent) {
+      const roadmap = await generateHorizonRoadmap(prompt);
+      cleanDecision.action = "PLAN";
+      cleanDecision.data = {
+        planSummary: roadmap.summary,
+        plan: roadmap.tasks.map(t => ({
+          title: t.title,
+          date: t.date,
+          durationHours: t.durationHours,
+          reason: t.reason
+        }))
+      };
+      finalThinkContext = roadmap.thinkContext || finalThinkContext;
+    }
+
     return {
       success: true,
       message: "I'm a task assistant, specialized in managing tasks. Ask me something related to managing your tasks.",
@@ -595,34 +607,53 @@ export async function confirmAction(decision: AgentResponse) {
   };
 }
 
-/** Strategic Intelligence Wrapper for Cache Consistency */
+/**
+ * Server-side in-memory cache keyed by task fingerprint.
+ * This guarantees that both the Strategy Page and the Notification Hub
+ * receive the EXACT same AI report for the same task set.
+ */
+const capacityReportCache = new Map<string, CapacityReport>();
+
 export async function getCapacityInsights(tasks: NotionTask[], userOffset: string): Promise<CapacityReport> {
+  const today = new Date().toISOString().split("T")[0];
   // SORT before join to ensure identity even if Notion API order changes
-  const taskFingerprint = [...tasks]
+  const taskFingerprint = `v3|${today}|` + [...tasks]
     .sort((a, b) => a.id.localeCompare(b.id))
     .map(t => `${t.id}-${t.status}-${t.name}-${t.deadline}`)
     .join("|");
 
-  // Use the fingerprint as the primary key for the cache
-  return getCachedCapacityInsights(taskFingerprint, tasks, userOffset);
+  // Return cached result if fingerprint matches — guaranteed same data
+  if (capacityReportCache.has(taskFingerprint)) {
+    return capacityReportCache.get(taskFingerprint)!;
+  }
+
+  const result = await runCapacityAnalysis(taskFingerprint, tasks, userOffset);
+  capacityReportCache.set(taskFingerprint, result);
+  // Limit cache size to prevent unbounded memory growth
+  if (capacityReportCache.size > 20) {
+    const firstKey = capacityReportCache.keys().next().value;
+    if (firstKey) capacityReportCache.delete(firstKey);
+  }
+  return result;
 }
 
-const getCachedCapacityInsights = unstable_cache(
-  async (_fingerprint: string, tasks: NotionTask[], userOffset: string): Promise<CapacityReport> => {
-    const [sign, h, m] = userOffset.match(/([+-])(\d{2}):(\d{2})/)?.slice(1) || ["+", "0", "0"];
-    const offsetMs = (parseInt(h) * 60 + parseInt(m)) * 60000 * (sign === "+" ? 1 : -1);
-    const localNow = new Date(new Date().getTime() + offsetMs);
-    const today = localNow.toISOString().split("T")[0];
+async function runCapacityAnalysis(_fingerprint: string, tasks: NotionTask[], userOffset: string): Promise<CapacityReport> {
+  const [sign, h, m] = userOffset.match(/([+-])(\d{2}):(\d{2})/)?.slice(1) || ["+", "0", "0"];
+  const offsetMs = (parseInt(h) * 60 + parseInt(m)) * 60000 * (sign === "+" ? 1 : -1);
+  const localNow = new Date(new Date().getTime() + offsetMs);
+  const today = localNow.toISOString().split("T")[0];
 
-    const taskContext = tasks
-      .filter(t => t.status?.toLowerCase() !== "done")
-      .map(t => `- Name: "${t.name}", Status: "${t.status}", Deadline: "${t.deadline}"`)
-      .join("\n");
+  const taskContext = tasks
+    .filter(t => t.status?.toLowerCase() !== "done")
+    .map(t => `- Name: "${t.name}", Status: "${t.status}", Deadline: "${t.deadline}"`)
+    .join("\n");
 
-    if (!taskContext) {
-      return { insights: [], overallSummary: "Your schedule is clear!" };
-    }
+  if (!taskContext) {
+    return { insights: [], overallSummary: "Your schedule is clear!" };
+  }
 
+  let raw = "";
+  try {
     const response = await groq.chat.completions.create({
       model: GROQ_MODEL,
       temperature: 0,
@@ -630,86 +661,109 @@ const getCachedCapacityInsights = unstable_cache(
         {
           role: "system",
           content: `You are a Capacity Planning Agent. Today is ${today}. 
-          Analyze the task list and provide a Strategic Intelligence Report.
-          
-          RULES:
-          1. Group tasks by date.
-          2. Estimate "Completion Hours" for each task based on complexity (0.0-2.0h for quick tasks, 2.0-4.0h for medium sized tasks, 4.0-8.0h for deep work).
-          3. Thresholds: SAFE (<8h per day), BUSY (8-10h per day), OVERLOADED (>10h per day).
-          4. For BUSY and OVERLOADED days, identify the heaviest task and suggest moving it to a nearby day with capacity.
-          
-          OUTPUT strict JSON:
-          {
-            "insights": [
-              { "date": "YYYY-MM-DD", "totalHours": 0.0, "status": "SAFE|BUSY|OVERLOADED", "taskInsights": [{ "name": "", "estimatedHours": 0.0 }], "suggestion": "Specific move advice" }
-            ],
-            "overallSummary": "1-2 sentence overview of the week"
-          }`
+            Analyze the task list and provide a Strategic Intelligence Report.
+
+            RULES:
+            1. Group tasks by date.  Include ALL tasks regardless of whether their deadline is past, today, or future.
+            2. Estimate "Completion Hours" for each task based on complexity (0.0-2.0h for quick tasks, 2.0-4.0h for medium sized tasks, 4.0-8.0h for deep work).
+            3. Thresholds: SAFE (<8h per day), BUSY (8-10h per day), OVERLOADED (>10h per day).
+            4. For BUSY and OVERLOADED days, identify the heaviest task and suggest moving it to a nearby day with capacity.
+            
+            OUTPUT strict JSON:
+            {
+              "insights": [
+                {
+                  "date": "YYYY-MM-DD",
+                  "totalHours": 0.0,
+                  "status": "SAFE|BUSY|OVERLOADED",
+                  "taskInsights": [{ "name": "", "estimatedHours": 0.0 }],
+                  "suggestion": "Plain English move advice",
+                  "mitigationTaskName": "Exact task name to move (or null if no suggestion)",
+                  "mitigationTargetDate": "YYYY-MM-DD target date (or null if no suggestion)"
+                }
+              ],
+              "overallSummary": "1-2 sentence overview of the week"
+            }`
         },
         { role: "user", content: `Existing Tasks:\n${taskContext}` }
       ]
     });
+    raw = response.choices[0]?.message?.content || "";
+  } catch (error) {
+    console.error("Groq API Error running Capacity Analysis:", error);
+    return { insights: [], overallSummary: "API Error: Please wait a minute before analyzing capacity again." };
+  }
+  const thinkMatch = raw.match(/<think>([\s\S]*?)<\/think>/);
+  const thinkContext = thinkMatch ? thinkMatch[1].trim() : "";
 
-    const raw = response.choices[0]?.message?.content || "";
-    const report = extractJSON<CapacityReport>(raw);
+  const report = extractJSON<CapacityReport>(raw);
 
-    if (report && report.insights) {
-      // PROACTIVELY FIX LLM MATH HALLUCINATIONS
-      report.insights = report.insights.map(day => {
-        if (day.taskInsights && day.taskInsights.length > 0) {
-          const actualTotal = day.taskInsights.reduce((sum, task) => sum + (task.estimatedHours || 0), 0);
-          return {
-            ...day,
-            totalHours: actualTotal,
-            // Re-verify status based on the accurate math
-            status: actualTotal > 10 ? "OVERLOADED" : actualTotal > 8 ? "BUSY" : "SAFE"
-          };
-        }
-        return day;
-      });
-    }
+  if (report && report.insights) {
+    // PROACTIVELY FIX LLM MATH HALLUCINATIONS
+    report.insights = report.insights.map(day => {
+      if (day.taskInsights && day.taskInsights.length > 0) {
+        const actualTotal = day.taskInsights.reduce((sum, task) => sum + (task.estimatedHours || 0), 0);
+        return {
+          ...day,
+          totalHours: actualTotal,
+          // Re-verify status based on the accurate math
+          status: actualTotal > 10 ? "OVERLOADED" : actualTotal > 8 ? "BUSY" : "SAFE"
+        };
+      }
+      return day;
+    });
+  }
 
-    return report || { insights: [], overallSummary: "Could not generate report." };
-  },
-  ['strategy-insights'],
-  { revalidate: 3600, tags: ['notion-tasks'] }
-);
+  return report
+    ? { ...report, thinkContext }
+    : { insights: [], overallSummary: "Could not generate report.", thinkContext };
+}
 
 
 // Focus Horizon: Automatic Project Breakdown
 export interface HorizonTaskEntry {
-  dayOffset: number; // Day 1, Day 2, etc.
+  date: string; // YYYY-MM-DD
   title: string;
-  estimatedHours: number;
-  description: string;
+  durationHours: number;
+  reason: string;
 }
 
 export interface HorizonRoadmap {
   projectTitle: string;
   summary: string;
   tasks: HorizonTaskEntry[];
+  thinkContext?: string;
 }
 
 export async function generateHorizonRoadmap(goalPrompt: string): Promise<HorizonRoadmap> {
+  const freshTasks = await fetchNotionTasks();
+  const taskContext = freshTasks.map(t =>
+    `- [${t.status || 'UNMAPPED'}] ${t.name} (Deadline: ${t.deadline || 'None'})`
+  ).join("\n");
+  const today = new Date().toISOString().split("T")[0];
+
   const response = await groq.chat.completions.create({
     model: GROQ_MODEL,
     messages: [
       {
         role: "system",
-        content: `You are the Focus Horizon AI. The user will provide a high-level project goal. Your job is to break it down into a highly actionable, logical 14-day roadmap.
+        content: `You are the Focus Horizon AI. The user will provide a high-level project goal.
+        Today is ${today}.
         
-        RULES:
-        1. Break the goal into sequential daily tasks.
-        2. Assign a 'dayOffset' (1 to 14) for each task. You don't have to fill all 14 days if the project is small.
-        3. Estimate hours per task (keep it under 4h per day).
-        4. Provide clear descriptions.
+        EXISTING TASKS:
+        ${taskContext}
+        PLAN: Perform "Time-Based Capacity Planning" to generate a sequential roadmap of 3 - 6 logical subtasks.
+        - 8-HOUR DAILY CAPACITY: Each day has a hard limit of 8 hours of productive work.
+        - ESTIMATED COMPLETION TIME (ECT): Estimate hours for EXISTING TASKS based on complexity.
+        - SEQUENTIAL PACKING: Assign an estimated duration (hours) to each new subtask. Schedule subtasks on days where the total (Existing Tasks + New Subtasks) does not exceed 8 hours. Skip any day at/above capacity.
+        - CAREFUL SCHEDULING: Create a concise 'summary' providing a "Time-Based Feasibility Analysis" explaining why you scheduled tasks onto specific dates. Map the subtasks into the 'tasks' array.
         
         OUTPUT strict JSON:
         {
           "projectTitle": "String",
           "summary": "String",
           "tasks": [
-            { "dayOffset": Number, "title": "String", "estimatedHours": Number, "description": "String" }
+            { "date": "YYYY-MM-DD", "title": "String", "durationHours": Number, "reason": "String" }
           ]
         }`
       },
@@ -718,6 +772,10 @@ export async function generateHorizonRoadmap(goalPrompt: string): Promise<Horizo
   });
 
   const raw = response.choices[0]?.message?.content || "";
-  return extractJSON<HorizonRoadmap>(raw) || { projectTitle: "Generation Failed", summary: "Please try again.", tasks: [] };
+  const thinkMatch = raw.match(/<think>([\s\S]*?)<\/think>/);
+  const thinkContext = thinkMatch ? thinkMatch[1].trim() : "";
+
+  const data = extractJSON<HorizonRoadmap>(raw) || { projectTitle: "Generation Failed", summary: "Please try again.", tasks: [] };
+  return { ...data, thinkContext };
 }
 

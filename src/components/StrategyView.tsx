@@ -1,16 +1,17 @@
 "use client";
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Sparkles, 
   Brain, 
   Zap, 
   LayoutDashboard, 
-  Clock, 
   Loader2, 
   TrendingUp, 
-  Target
+  Check,
+  X
 } from 'lucide-react';
-import { getCapacityInsights, CapacityReport, CapacityInsight, NotionTask } from "@/app/actions/agent-actions";
+import { getCapacityInsights, CapacityReport, NotionTask } from "@/app/actions/agent-actions";
+import { updateNotionTask, fetchNotionTasks } from "@/app/actions/notion-actions";
 
 interface StrategyViewProps {
   tasks: NotionTask[];
@@ -20,10 +21,47 @@ interface StrategyViewProps {
 export default function StrategyView({ tasks, initialReport }: StrategyViewProps) {
   const [report, setReport] = useState<CapacityReport | null>(initialReport || null);
   const [loading, setLoading] = useState(!initialReport);
+  const [thinkOpen, setThinkOpen] = useState(false);
+  const [mitigationState, setMitigationState] = useState<Record<string, 'idle' | 'loading' | 'accepted' | 'rejected'>>({});
+  const fetchInsightsRef = React.useRef<() => void>(() => {});
+
+  const handleAccept = useCallback(async (insightDate: string, taskName: string, targetDate: string) => {
+    setMitigationState(prev => ({ ...prev, [insightDate]: 'loading' }));
+    try {
+      const allTasks = await fetchNotionTasks();
+      const matchedTask = allTasks.find(t =>
+        t.name.toLowerCase().trim() === taskName.toLowerCase().trim()
+      );
+      if (!matchedTask) {
+        console.error('Task not found:', taskName);
+        setMitigationState(prev => ({ ...prev, [insightDate]: 'idle' }));
+        return;
+      }
+      const result = await updateNotionTask(
+        matchedTask.id,
+        undefined,
+        targetDate,
+        matchedTask.propNames,
+        matchedTask.propTypes
+      );
+      if (result.success) {
+        setMitigationState(prev => ({ ...prev, [insightDate]: 'accepted' }));
+        // Bust the server-side Map cache by clearing the fingerprint
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('proactive_tasks_fingerprint');
+        }
+        setTimeout(() => fetchInsightsRef.current?.(), 1500);
+      } else {
+        setMitigationState(prev => ({ ...prev, [insightDate]: 'idle' }));
+      }
+    } catch (e) {
+      console.error('Accept mitigation error:', e);
+      setMitigationState(prev => ({ ...prev, [insightDate]: 'idle' }));
+    }
+  }, []);
 
   useEffect(() => {
     const fetchInsights = async () => {
-      // If we already have a report and tasks haven't changed, skip loading state
       if (report && !loading) {
          // Keep existing report while updating in background to avoid flicker
       } else {
@@ -38,16 +76,12 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
         const minutes = (Math.abs(offsetMinutes) % 60).toString().padStart(2, '0');
         const userOffset = `${sign}${hours}:${minutes}`;
 
-        // If we're refreshing because of a signal, we need the latest task list first
-        const { fetchNotionTasks } = await import("@/app/actions/notion-actions");
         const freshTasks = await fetchNotionTasks();
         const data = await getCapacityInsights(freshTasks, userOffset);
         setReport(data);
 
-        // Sync to the Strategic Intelligence Hub in the header
         if (typeof window !== "undefined" && data) {
           const alerts = data.insights.filter(i => i.status === "BUSY" || i.status === "OVERLOADED");
-          // SORT before fingerprinting to match AgentEngine exactly
           const currentFingerprint = [...freshTasks]
             .sort((a, b) => a.id.localeCompare(b.id))
             .map(t => `${t.id}-${t.status}-${t.name}-${t.deadline}`)
@@ -68,16 +102,13 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
       }
     };
 
-    // Listen for global task updates (e.g., from the Assistant)
+    fetchInsightsRef.current = fetchInsights;
+    (window as any).__strategyHandleAccept = handleAccept;
+
     const handleSync = () => fetchInsights();
     window.addEventListener('notion-tasks-updated', handleSync);
     
-    // Initial fetch if needed
-    if (tasks.length > 0 && !initialReport) {
-      fetchInsights();
-    } else if (tasks.length === 0) {
-      setLoading(false);
-    }
+    fetchInsights();
 
     return () => window.removeEventListener('notion-tasks-updated', handleSync);
   }, [tasks, initialReport]);
@@ -92,7 +123,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
     );
   }
 
-  if (!tasks.length || !report?.insights.length) {
+  if (!report?.insights?.length) {
     return (
       <div className="text-center py-24 bg-white rounded-[3rem] border border-slate-100 shadow-sm">
         <LayoutDashboard className="mx-auto text-slate-200 mb-6" size={64} />
@@ -112,7 +143,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
          <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10 mix-blend-overlay"></div>
 
          <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-10">
-            <div className="space-y-6 max-w-2xl">
+            <div className="space-y-6 w-full">
                <div className="inline-flex items-center gap-2.5 bg-white/10 backdrop-blur-xl px-5 py-2.5 rounded-full text-[11px] font-black uppercase tracking-[0.25em] border border-white/10 shadow-2xl">
                   <Sparkles size={14} className="text-purple-400" /> Strategic Capacity Report
                </div>
@@ -132,8 +163,37 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                   </div>
                </div>
             </div>
-            <Brain size={200} className="absolute -bottom-16 -right-16 text-white/5 group-hover:scale-110 group-hover:rotate-6 transition-all duration-1000 pointer-events-none" />
          </div>
+
+         {report.thinkContext && (
+           <div className="mt-8 pt-6 border-t border-white/10 relative z-10 w-full col-span-full">
+             <button
+               type="button"
+               onClick={() => setThinkOpen(!thinkOpen)}
+               className="flex items-center gap-2 text-[10px] font-black text-purple-300/60 hover:text-purple-300 transition-all uppercase tracking-[0.2em] cursor-pointer"
+             >
+               <Brain size={12} className={thinkOpen ? "text-purple-400" : ""} />
+               <span>{thinkOpen ? "Collapse Intelligence" : "Expand Intelligence"}</span>
+               <svg
+                 viewBox="0 0 24 24"
+                 fill="none"
+                 stroke="currentColor"
+                 strokeWidth="3"
+                 className={`w-2.5 h-2.5 transition-transform duration-500 ${thinkOpen ? "rotate-180" : "rotate-0 text-purple-300/40"}`}
+               >
+                 <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round"/>
+               </svg>
+             </button>
+             {thinkOpen && (
+               <div className="mt-5 pl-5 border-l-2 border-purple-500/30 custom-scrollbar w-full">
+                 <p className="text-[11px] text-purple-100/60 leading-relaxed whitespace-pre-wrap font-mono">
+                   {report.thinkContext}
+                 </p>
+               </div>
+             )}
+           </div>
+         )}
+         <Brain size={200} className="absolute -bottom-16 -right-16 text-white/5 group-hover:scale-110 group-hover:rotate-6 transition-all duration-1000 pointer-events-none" />
       </div>
 
       {/* Capacity Grid: Premium Analytical Cards */}
@@ -187,22 +247,73 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                   )}
                </div>
 
-               {/* Strategy Recommendation: Cinematic Look */}
+               {/* Strategy Recommendation with Accept / Reject */}
                {insight.suggestion && (
-                 <div className={`mt-auto p-6 rounded-[1.5rem] border shadow-sm relative overflow-hidden group/sugg transition-all duration-500 ${isOverload 
-                    ? 'bg-rose-50 border-rose-100 group-hover:bg-rose-100' 
-                    : 'bg-indigo-50 border-indigo-100 group-hover:bg-indigo-100'}`}>
-                    <div className="flex items-start gap-4 relative z-10">
-                       <Zap size={18} className={`mt-1 flex-shrink-0 fill-current ${isOverload ? 'text-rose-500' : 'text-indigo-600'}`} />
-                       <div className="flex flex-col gap-1">
-                          <span className={`text-[9px] font-black uppercase tracking-[0.2em] ${isOverload ? 'text-rose-400' : 'text-indigo-400'}`}>Agent Mitigator</span>
-                          <p className={`text-xs font-black leading-relaxed tracking-tight ${isOverload ? 'text-rose-900' : 'text-indigo-900'}`}>
-                            {insight.suggestion}
-                          </p>
+                 <div className={`mt-auto p-7 min-h-[140px] rounded-[1.8rem] border shadow-sm relative overflow-hidden group/sugg transition-all duration-500 
+                    hover:shadow-xl hover:-translate-y-1 ${
+                    isOverload 
+                    ? 'bg-rose-50 border-rose-100 group-hover:bg-rose-100/80' 
+                    : 'bg-indigo-50 border-indigo-100 group-hover:bg-indigo-100/80'}`}>
+                    
+                    <div className="flex flex-col gap-5 relative z-10 h-full">
+                       <div className="flex items-start gap-3.5">
+                          <div className={`p-2 rounded-xl transition-colors ${isOverload ? 'bg-rose-200/50 text-rose-600' : 'bg-indigo-200/50 text-indigo-600'}`}>
+                            <Zap size={14} className="fill-current" />
+                          </div>
+                          <div className="flex flex-col gap-1.5 flex-1">
+                             <span className={`text-[10px] font-black uppercase tracking-[0.25em] ${isOverload ? 'text-rose-400' : 'text-indigo-400'}`}>Agent Mitigator</span>
+                             
+                             {mitigationState[insight.date] === 'accepted' ? (
+                               <p className="text-xs font-black text-emerald-700 flex items-center gap-1.5 animate-in slide-in-from-left-2">
+                                 <Check size={14} className="text-emerald-600" /> Task moved successfully!
+                               </p>
+                             ) : mitigationState[insight.date] === 'rejected' ? (
+                               <p className="text-xs font-bold text-slate-400 line-through italic animate-in fade-in">Suggestion dismissed</p>
+                             ) : (
+                               <p className={`text-[13px] font-bold leading-relaxed tracking-tight ${isOverload ? 'text-rose-900' : 'text-indigo-900'}`}>
+                                 {insight.suggestion}
+                               </p>
+                             )}
+                          </div>
                        </div>
+
+                       {/* Action Bar — Improved Visibility */}
+                       {insight.mitigationTaskName && insight.mitigationTargetDate &&
+                        mitigationState[insight.date] !== 'accepted' &&
+                        mitigationState[insight.date] !== 'rejected' && (
+                         <div className="flex items-center gap-3 pt-1 mt-auto">
+                           <button
+                             onClick={() => (window as any).__strategyHandleAccept?.(insight.date, insight.mitigationTaskName!, insight.mitigationTargetDate!)}
+                             disabled={mitigationState[insight.date] === 'loading'}
+                             className={`flex-1 flex items-center justify-center gap-2 px-5 py-3 rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all duration-300 shadow-lg active:scale-95
+                               ${ isOverload
+                                 ? 'bg-rose-600 hover:bg-rose-700 text-white disabled:bg-rose-300 hover:shadow-rose-300/50'
+                                 : 'bg-indigo-600 hover:bg-indigo-700 text-white disabled:bg-indigo-300 hover:shadow-indigo-300/50'
+                               }`}
+                           >
+                             {mitigationState[insight.date] === 'loading' ? (
+                               <>
+                                 <Loader2 size={12} className="animate-spin" />
+                                 <span>Moving...</span>
+                               </>
+                             ) : (
+                               <>
+                                 <Check size={12} />
+                                 <span>Accept</span>
+                               </>
+                             )}
+                           </button>
+                           <button
+                             onClick={() => setMitigationState(prev => ({ ...prev, [insight.date]: 'rejected' }))}
+                             disabled={mitigationState[insight.date] === 'loading'}
+                             className="px-5 py-3 rounded-2xl text-[11px] font-black uppercase tracking-widest bg-white hover:bg-slate-100 text-slate-500 transition-all duration-300 border border-slate-100 hover:border-slate-200"
+                           >
+                             <X size={12} />
+                           </button>
+                         </div>
+                       )}
                     </div>
-                    {/* Decorative Background Icon */}
-                    <Brain size={100} className={`absolute -bottom-10 -right-10 opacity-[0.03] pointer-events-none group-hover/sugg:scale-110 transition-transform ${isOverload ? 'text-rose-900' : 'text-indigo-900'}`} />
+                    <Brain size={120} className={`absolute -bottom-10 -right-10 opacity-[0.04] pointer-events-none group-hover/sugg:scale-125 transition-transform duration-700 ${isOverload ? 'text-rose-900' : 'text-indigo-900'}`} />
                  </div>
                )}
             </div>

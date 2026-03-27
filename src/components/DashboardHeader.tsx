@@ -1,17 +1,22 @@
 "use client";
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { usePathname } from 'next/navigation';
-import { Bell, BellRing, Clock, X, Terminal, Brain, Target, Zap } from 'lucide-react';
+import { Bell, BellRing, Clock, X, Terminal, Brain, Target, Zap, Check, Loader2 } from 'lucide-react';
+import { updateNotionTask, fetchNotionTasks } from "@/app/actions/notion-actions";
 
 // Use local storage to persist notifications
 type AgentAlert = {
     id: string;
     taskId: string;
     taskName: string;
-    urgency: "OVERDUE" | "TODAY" | "TOMORROW" | "SOON";
+    urgency: "OVERDUE" | "TODAY" | "TOMORROW" | "SOON" | "CAPACITY_BUSY" | "CAPACITY_OVERLOADED";
     deadline?: string;
     alertedAt: number;
     timestamp: string;
+    // Mitigation Action Data
+    mitigationSuggestion?: string;
+    mitigationTaskName?: string;
+    mitigationTargetDate?: string;
 };
 
 const getFormattedAlertTime = (ms: number | undefined, timeString: string) => {
@@ -61,6 +66,32 @@ export default function DashboardHeader() {
   const [capacityData, setCapacityData] = useState<{ alerts: any[], summary: string, updatedAt: number } | null>(null);
   const [unreadCapacityCount, setUnreadCapacityCount] = useState(0);
   const [hasOverload, setHasOverload] = useState(false);
+  const [mitigationStates, setMitigationStates] = useState<Record<string, 'idle' | 'loading' | 'done' | 'rejected'>>({});
+
+  const handleAcceptMitigation = useCallback(async (alertId: string, taskName: string, targetDate: string) => {
+    setMitigationStates(prev => ({ ...prev, [alertId]: 'loading' }));
+    try {
+      const allTasks = await fetchNotionTasks();
+      const matched = allTasks.find(t => t.name.toLowerCase().trim() === taskName.toLowerCase().trim());
+      if (!matched) {
+        setMitigationStates(prev => ({ ...prev, [alertId]: 'idle' }));
+        return;
+      }
+      const result = await updateNotionTask(matched.id, undefined, targetDate, matched.propNames, matched.propTypes);
+      if (result.success) {
+        setMitigationStates(prev => ({ ...prev, [alertId]: 'done' }));
+        // Bust local storage fingerprint to force refresh
+        localStorage.removeItem("proactive_tasks_fingerprint");
+        // Trigger global refresh events
+        window.dispatchEvent(new Event('notion-tasks-updated'));
+      } else {
+        setMitigationStates(prev => ({ ...prev, [alertId]: 'idle' }));
+      }
+    } catch (e) {
+      console.error("Header Mitigation Error", e);
+      setMitigationStates(prev => ({ ...prev, [alertId]: 'idle' }));
+    }
+  }, []);
 
   // Sync notifications from localStorage
   useEffect(() => {
@@ -164,6 +195,8 @@ export default function DashboardHeader() {
     TODAY:    { border: "border-orange-200/50", bg: "bg-orange-50/60", newBg: "bg-orange-300", iconColor: "text-orange-600", text: "text-orange-950", label: "Due Today", accent: "bg-orange-600", badge: "bg-white/60 text-orange-600 border border-orange-200/50" },
     TOMORROW: { border: "border-amber-200/50", bg: "bg-amber-50/60", newBg: "bg-amber-300", iconColor: "text-amber-600", text: "text-amber-950", label: "Due Tomorrow", accent: "bg-amber-600", badge: "bg-white/60 text-amber-600 border border-amber-200/50" },
     SOON:     { border: "border-blue-200/50", bg: "bg-blue-50/60", newBg: "bg-blue-300", iconColor: "text-blue-600", text: "text-blue-950", label: "Due Soon", accent: "bg-blue-600", badge: "bg-white/60 text-blue-600 border border-blue-200/50" },
+    CAPACITY_BUSY: { border: "border-indigo-200/50", bg: "bg-indigo-50/60", newBg: "bg-indigo-300", iconColor: "text-indigo-600", text: "text-indigo-950", label: "Heavy Load", accent: "bg-indigo-600", badge: "bg-white/60 text-indigo-600 border border-indigo-200/50" },
+    CAPACITY_OVERLOADED: { border: "border-rose-200/50", bg: "bg-rose-50/60", newBg: "bg-rose-300", iconColor: "text-rose-600", text: "text-rose-950", label: "Overloaded", accent: "bg-rose-600", badge: "bg-white/60 text-rose-600 border border-rose-200/50" },
   };
 
   return (
@@ -223,7 +256,7 @@ export default function DashboardHeader() {
                   </div>
                </div>
 
-               <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto bg-slate-50/30 scrollbar-hide">
+               <div className="p-6 pb-12 space-y-4 max-h-[65vh] overflow-y-auto bg-slate-50/30 scrollbar-hide">
                   {(!capacityData || capacityData.alerts.length === 0) ? (
                     <div className="py-12 flex flex-col items-center justify-center text-center">
                        <Target className="text-slate-200 mb-4" size={48} />
@@ -247,16 +280,59 @@ export default function DashboardHeader() {
                              <div className={`mt-2 p-5 rounded-[1.5rem] border shadow-sm relative overflow-hidden group/sugg transition-all duration-500 ${isOverload 
                                 ? 'bg-rose-50 border-rose-100' 
                                 : 'bg-indigo-50 border-indigo-100'}`}>
-                                <div className="flex items-start gap-4 relative z-10">
-                                   <Zap size={18} className={`mt-1 flex-shrink-0 fill-current ${isOverload ? 'text-rose-500' : 'text-indigo-600'}`} />
-                                   <div className="flex flex-col gap-1">
-                                      <span className={`text-[9px] font-black uppercase tracking-[0.2em] ${isOverload ? 'text-rose-400' : 'text-indigo-400'}`}>Agent Mitigator</span>
-                                      <p className={`text-[12px] font-black leading-relaxed tracking-tight ${isOverload ? 'text-rose-900' : 'text-indigo-900'}`}>
-                                        {alert.suggestion}
-                                      </p>
+                                <div className="flex flex-col gap-4 relative z-10">
+                                   <div className="flex items-start gap-3">
+                                      <Zap size={18} className={`mt-1 flex-shrink-0 fill-current ${isOverload ? 'text-rose-500' : 'text-indigo-600'}`} />
+                                      <div className="flex flex-col gap-1">
+                                         <span className={`text-[9px] font-black uppercase tracking-[0.2em] ${isOverload ? 'text-rose-400' : 'text-indigo-400'}`}>Agent Mitigator</span>
+                                         
+                                         {mitigationStates[alert.id] === 'done' ? (
+                                           <div className="text-[11px] font-black text-emerald-700 flex items-center gap-1.5 animate-in slide-in-from-left-2">
+                                              <Check size={14} /> Task rescheduled!
+                                           </div>
+                                         ) : mitigationStates[alert.id] === 'rejected' ? (
+                                           <p className="text-[11px] font-bold text-slate-400 line-through italic">Dismissed</p>
+                                         ) : (
+                                           <p className={`text-[12px] font-black leading-relaxed tracking-tight ${isOverload ? 'text-rose-900' : 'text-indigo-900'}`}>
+                                             {alert.suggestion}
+                                           </p>
+                                         )}
+                                      </div>
                                    </div>
+
+                                   {/* ACTION BUTTONS DIRECTLY IN HUB */}
+                                   {!mitigationStates[alert.id] && alert.mitigationTaskName && alert.mitigationTargetDate && (
+                                     <div className="flex gap-2">
+                                       <button 
+                                         onClick={(e) => {
+                                           e.stopPropagation();
+                                           handleAcceptMitigation(alert.id, alert.mitigationTaskName!, alert.mitigationTargetDate!);
+                                         }}
+                                         disabled={mitigationStates[alert.id] === 'loading'}
+                                         className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all
+                                           ${isOverload 
+                                             ? 'bg-rose-600 hover:bg-rose-700 text-white disabled:bg-rose-300 shadow-lg shadow-rose-200/50' 
+                                             : 'bg-indigo-600 hover:bg-indigo-700 text-white disabled:bg-indigo-300 shadow-lg shadow-indigo-200/50'}`}
+                                       >
+                                         {mitigationStates[alert.id] === 'loading' ? (
+                                           <Loader2 size={12} className="animate-spin" />
+                                         ) : (
+                                           <Check size={12} />
+                                         )}
+                                         {mitigationStates[alert.id] === 'loading' ? 'Moving...' : 'Accept'}
+                                       </button>
+                                       <button 
+                                         onClick={(e) => {
+                                           e.stopPropagation();
+                                           setMitigationStates(prev => ({ ...prev, [alert.id]: 'rejected' }));
+                                         }}
+                                         className="px-4 py-2.5 rounded-xl text-[10px] font-black uppercase bg-white/50 border border-black/5 hover:bg-white text-slate-400"
+                                       >
+                                         <X size={12} />
+                                       </button>
+                                     </div>
+                                   )}
                                 </div>
-                                {/* Decorative Background Icon */}
                                 <Brain size={120} className={`absolute -bottom-12 -right-12 opacity-[0.03] pointer-events-none group-hover/sugg:scale-110 transition-transform ${isOverload ? 'text-rose-900' : 'text-indigo-900'}`} />
                              </div>
                            )}
@@ -347,38 +423,75 @@ export default function DashboardHeader() {
                           <BellRing size={16} />
                         </div>
                         
-                        <div className="flex-1 min-w-0 pr-4">
-                          <div className="flex items-center justify-between mb-1.5">
-                            <div className={`flex items-center gap-2 ${isNew ? '' : 'opacity-60'}`}>
-                              {/* New items get the SOLID badge, Old items get the GLASS badge */}
-                              <span className={`text-[8px] font-black uppercase tracking-[0.2em] px-2 py-1 rounded-md shadow-sm border ${
-                                isNew 
-                                  ? `${s.accent} text-white border-transparent` 
-                                  : s.badge
-                              }`}>
-                                {s.label}
+                          <div className={`flex flex-col gap-2 flex-1 min-w-0 pr-4`}>
+                            <div className="flex items-center justify-between">
+                              <div className={`flex items-center gap-2 ${isNew ? '' : 'opacity-60'}`}>
+                                <span className={`text-[8px] font-black uppercase tracking-[0.2em] px-2 py-1 rounded-md shadow-sm border ${
+                                  isNew 
+                                    ? `${s.accent} text-white border-transparent` 
+                                    : s.badge
+                                }`}>
+                                  {s.label}
+                                </span>
+                                {isNew && (
+                                  <span className="text-[7px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-indigo-600 text-white shadow-sm shadow-indigo-200">New</span>
+                                )}
+                              </div>
+                              <span className={`text-[9px] font-black tabular-nums uppercase tracking-widest ${isNew ? 'bg-white/60' : 'bg-white/40 opacity-50'} px-2 py-0.5 rounded-full border border-white/40 ${s.text}`}>
+                                {getFormattedAlertTime(toast.alertedAt, toast.timestamp)}
                               </span>
-                              {isNew && (
-                                <span className="text-[7px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-indigo-600 text-white shadow-sm shadow-indigo-200">New</span>
+                            </div>
+
+                            <div className="flex flex-col gap-2.5">
+                              {mitigationStates[toast.id] === 'done' ? (
+                                <p className="text-[12px] font-black text-emerald-700 bg-emerald-50/50 py-2 px-3 rounded-xl border border-emerald-100 flex items-center gap-2">
+                                  <Check size={14} /> Task moved successfully!
+                                </p>
+                              ) : mitigationStates[toast.id] === 'rejected' ? (
+                                <p className="text-[12px] font-bold text-slate-400 line-through italic px-3 opacity-60">Dismissed</p>
+                              ) : (
+                                <>
+                                  <p className={`text-[13px] font-bold leading-tight tracking-tight pr-4 ${isNew ? 'text-slate-900' : 'text-slate-600'}`}>
+                                    {toast.mitigationSuggestion || toast.taskName}
+                                  </p>
+
+                                  {/* ACTION BUTTONS DIRECTLY IN NOTIFICATION PANEL */}
+                                  {toast.mitigationTaskName && toast.mitigationTargetDate && (
+                                    <div className="flex gap-2">
+                                      <button 
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleAcceptMitigation(toast.id, toast.mitigationTaskName!, toast.mitigationTargetDate!);
+                                        }}
+                                        disabled={mitigationStates[toast.id] === 'loading'}
+                                        className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all
+                                          ${toast.urgency === 'CAPACITY_OVERLOADED' 
+                                            ? 'bg-rose-500 hover:bg-rose-600 text-white' 
+                                            : 'bg-indigo-500 hover:bg-indigo-600 text-white'}`}
+                                      >
+                                        {mitigationStates[toast.id] === 'loading' ? (
+                                          <Loader2 size={12} className="animate-spin" />
+                                        ) : (
+                                          <Check size={12} />
+                                        )}
+                                        {mitigationStates[toast.id] === 'loading' ? 'Moving...' : 'Accept'}
+                                      </button>
+                                      <button 
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setMitigationStates(prev => ({ ...prev, [toast.id]: 'rejected' }));
+                                        }}
+                                        className="px-4 py-2.5 rounded-xl text-[10px] font-black uppercase bg-slate-100 hover:bg-slate-200 text-slate-400"
+                                      >
+                                        Reject
+                                      </button>
+                                    </div>
+                                  )}
+                                </>
                               )}
                             </div>
-                            <span className={`text-[9px] font-black tabular-nums uppercase tracking-widest ${isNew ? 'bg-white/60' : 'bg-white/40 opacity-50'} px-2 py-0.5 rounded-full border border-white/40 ${s.text}`}>
-                              {getFormattedAlertTime(toast.alertedAt, toast.timestamp)}
-                            </span>
                           </div>
-                          
-                          <p className={`text-sm font-black tracking-tight leading-tight mb-2.5 line-clamp-1 ${s.text} ${isNew ? 'opacity-100' : 'opacity-60'}`}>
-                            {toast.taskName}
-                          </p>
-                          
-                          <div className={`flex items-center gap-2 ${isNew ? 'opacity-100' : 'opacity-50'}`}>
-                             <Clock size={12} className={s.iconColor} />
-                             <span className={`text-[10px] font-black uppercase tracking-widest ${s.text} leading-none pt-0.5 truncate`}>
-                               {formatDeadline(toast.deadline || "")}
-                             </span>
-                          </div>
-                        </div>
-                        
+
                         <button 
                           onClick={() => removeOne(toast.id, toast.taskId, toast.urgency)}
                           className="absolute top-4 right-4 text-slate-300 hover:text-rose-500 hover:bg-rose-50/50 p-1.5 rounded-lg cursor-pointer transition-all z-20 opacity-0 group-hover:opacity-100"

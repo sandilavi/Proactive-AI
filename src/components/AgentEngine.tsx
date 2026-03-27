@@ -9,10 +9,15 @@ interface ProactiveAlert {
   id: string;
   taskId: string;
   taskName: string;
-  urgency: "OVERDUE" | "TODAY" | "TOMORROW" | "SOON";
+  urgency: "OVERDUE" | "TODAY" | "TOMORROW" | "SOON" | "CAPACITY_BUSY" | "CAPACITY_OVERLOADED";
   deadline: string;
   timestamp: string;
   alertedAt?: number;
+  read: boolean;
+  // New mitigation fields
+  mitigationSuggestion?: string;
+  mitigationTaskName?: string;
+  mitigationTargetDate?: string;
 }
 
 function classifyDeadline(deadline: string): ProactiveAlert["urgency"] | null {
@@ -44,6 +49,8 @@ export default function AgentEngine() {
       TODAY:    "⚠️ Due TODAY",
       TOMORROW: "⚠️ Due TOMORROW",
       SOON:     "🔔 Due Soon",
+      CAPACITY_BUSY: "⚠️ HEAVY LOAD",
+      CAPACITY_OVERLOADED: "🔥 OVERLOADED"
     };
     const body = `"${alert.taskName}" — ${urgencyLabel[alert.urgency]}`;
     if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
@@ -52,100 +59,97 @@ export default function AgentEngine() {
   }, []);
 
   useEffect(() => {
-    const urgencyRank: Record<ProactiveAlert["urgency"], number> = { OVERDUE: 0, TODAY: 1, TOMORROW: 2, SOON: 3 };
+    const urgencyRank: Record<ProactiveAlert["urgency"], number> = { 
+      OVERDUE: 0, 
+      CAPACITY_OVERLOADED: 1,
+      TODAY: 2, 
+      CAPACITY_BUSY: 3,
+      TOMORROW: 4, 
+      SOON: 5 
+    };
 
     const syncNotifications = async () => {
       try {
-        const tasks = await fetchNotionTasks();
-        if (!tasks) return;
-        
-        const activeTasks = tasks.filter(t => t.status?.toLowerCase() !== "done");
-        const prevToasts = activeToastsRef.current;
-        const urgentAlerts: ProactiveAlert[] = [];
+        // 1. Fetch fresh data from Notion directly to ensure parity with StrategyView
+        const { fetchNotionTasks } = await import("@/app/actions/notion-actions");
+        const freshTasks = await fetchNotionTasks();
+        if (!freshTasks) return;
+
         const now = new Date();
-        const nowString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        
-        let newUnreadFound = false;
-
-        for (const task of activeTasks) {
-          const urgency = classifyDeadline(task.deadline ?? "");
-          if (!urgency) continue;
-
-          const mutedKey = `proactive_muted_${task.id}_${urgency}`;
-          if (typeof window !== "undefined" && localStorage.getItem(mutedKey)) continue;
-
-          const existingAlert = prevToasts.find(t => t.taskId === task.id);
-          const alertedKey = `proactive_alerted_${task.id}_${urgency}`;
-          
-          let alertTimestamp = nowString;
-          let alertedMs = Date.now();
-          let isFreshAlert = true;
-
-          if (existingAlert) {
-            const oldRank = urgencyRank[existingAlert.urgency];
-            const newRank = urgencyRank[urgency];
-            if (newRank < oldRank) {
-              isFreshAlert = true; 
-            } else {
-              alertTimestamp = existingAlert.timestamp;
-              alertedMs = existingAlert.alertedAt || Date.now();
-              isFreshAlert = false;
-            }
-          } 
-          else if (typeof window !== "undefined") {
-            const cached = localStorage.getItem(alertedKey);
-            if (cached && cached.startsWith('{')) {
-              try {
-                const parsed = JSON.parse(cached);
-                alertTimestamp = parsed.displayTime || nowString;
-                alertedMs = parsed.alertedAt || Date.now();
-                isFreshAlert = false;
-              } catch {}
-            }
-          }
-
-          if (isFreshAlert) {
-             const alreadyFreshInSession = prevToasts.some(t => t.taskId === task.id && t.urgency === urgency);
-             if (!alreadyFreshInSession) {
-               newUnreadFound = true;
-               if (typeof window !== "undefined") {
-                 localStorage.setItem(alertedKey, JSON.stringify({ alertedAt: alertedMs, displayTime: alertTimestamp }));
-               }
-               
-               // Fire OS Notification for truly fresh events
-               const newAlert: ProactiveAlert = {
-                 id: `${task.id}-${urgency}-${alertedMs}`,
-                 taskId: task.id,
-                 taskName: task.name,
-                 urgency,
-                 deadline: task.deadline || "",
-                 timestamp: alertTimestamp,
-                 alertedAt: alertedMs
-               };
-               fireOsNotification(newAlert);
-             }
-          }
-
-          urgentAlerts.push({ 
-            id: `${task.id}-${urgency}-${alertedMs}`,
-            taskId: task.id, 
-            taskName: task.name, 
-            urgency, 
-            deadline: task.deadline ?? "", 
-            timestamp: alertTimestamp,
-            alertedAt: alertedMs 
-          });
-        }
-
-        // 2. Performance Tracking: Check if tasks changed since last sync
-        // SORT before join to ensure identity even if Notion API order changes
-        const currentFingerprint = [...tasks]
+        const prevToasts = activeToastsRef.current;
+        const currentFingerprint = [...freshTasks]
           .sort((a, b) => a.id.localeCompare(b.id))
           .map(t => `${t.id}-${t.status}-${t.name}-${t.deadline}`)
           .join("|");
           
         const tasksActuallyChanged = taskFingerprintRef.current !== "" && taskFingerprintRef.current !== currentFingerprint;
         taskFingerprintRef.current = currentFingerprint;
+
+        const urgentAlerts: ProactiveAlert[] = [];
+
+        // 2. Identify urgent tasks (Overdue/Today/Upcoming)
+        for (const task of freshTasks) {
+          if (!task.deadline || task.status?.toLowerCase() === "done") continue;
+          
+          const deadline = new Date(task.deadline);
+          const diffDays = Math.ceil((deadline.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+          
+          let urgency: ProactiveAlert["urgency"] | null = null;
+          if (diffDays < 0) urgency = "OVERDUE";
+          else if (diffDays === 0) urgency = "TODAY";
+          else if (diffDays === 1) urgency = "TOMORROW";
+          else if (diffDays <= 3) urgency = "SOON";
+
+          if (urgency) {
+            const alertedKey = `proactive_alert_${task.id}_${urgency}`;
+            const nowString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            let alertedMs = Date.now();
+            let alertTimestamp = nowString;
+            let isFreshAlert = true;
+
+            const saved = typeof window !== "undefined" ? localStorage.getItem(alertedKey) : null;
+            if (saved) {
+              try {
+                const parsed = JSON.parse(saved);
+                alertTimestamp = parsed.displayTime || nowString;
+                alertedMs = parsed.alertedAt || Date.now();
+                isFreshAlert = false;
+              } catch {}
+            }
+
+            if (isFreshAlert) {
+               const alreadyFreshInSession = prevToasts.some(t => t.taskId === task.id && t.urgency === urgency);
+               if (!alreadyFreshInSession) {
+                 if (typeof window !== "undefined") {
+                   localStorage.setItem(alertedKey, JSON.stringify({ alertedAt: alertedMs, displayTime: alertTimestamp }));
+                 }
+                 
+                 // Fire OS Notification for truly fresh events
+                 fireOsNotification({
+                    id: `${task.id}-${urgency}-${alertedMs}`,
+                    taskId: task.id,
+                    taskName: task.name,
+                    urgency,
+                    deadline: task.deadline || "",
+                    timestamp: alertTimestamp,
+                    alertedAt: alertedMs,
+                    read: false // Matches type
+                 });
+               }
+            }
+
+            urgentAlerts.push({ 
+              id: `${task.id}-${urgency}-${alertedMs}`,
+              taskId: task.id, 
+              taskName: task.name, 
+              urgency, 
+              deadline: task.deadline ?? "", 
+              timestamp: alertTimestamp,
+              alertedAt: alertedMs,
+              read: false
+            });
+          }
+        }
 
         // Global Sync: Sort so most recent is at the top
         const sorted = [...urgentAlerts].sort((a, b) => (b.alertedAt || 0) - (a.alertedAt || 0));
@@ -154,7 +158,6 @@ export default function AgentEngine() {
         // Signal that new alerts are ready
         window.dispatchEvent(new Event('notifications-updated'));
         
-        // If the task list itself changed (e.g. data modified in Notion app), signal the Strategy/Dashboard pages
         if (tasksActuallyChanged) {
           window.dispatchEvent(new Event('notion-tasks-updated'));
         }
@@ -164,7 +167,6 @@ export default function AgentEngine() {
         // 3. Strategic Capacity Monitor: Detect burnout risk
         const storedFingerprint = localStorage.getItem("proactive_tasks_fingerprint");
         
-        // ONLY call the AI if the tasks have actually changed since the last saved report
         if (currentFingerprint !== storedFingerprint) {
             const offsetMinutes = -now.getTimezoneOffset();
             const sign = offsetMinutes >= 0 ? '+' : '-';
@@ -172,12 +174,26 @@ export default function AgentEngine() {
             const minutes = (Math.abs(offsetMinutes) % 60).toString().padStart(2, '0');
             const userOffset = `${sign}${hours}:${minutes}`;
 
-            const report = await getCapacityInsights(tasks, userOffset);
-            if (report && report.insights) {
-                const alerts = report.insights.filter(i => i.status === "BUSY" || i.status === "OVERLOADED");
+            const report = await getCapacityInsights(freshTasks, userOffset);
+            if (report && report.insights && report.overallSummary) {
+                // Add capacity-specific insights
+                const capacityAlerts: ProactiveAlert[] = report.insights
+                    .filter(i => i.status === "BUSY" || i.status === "OVERLOADED")
+                    .map(i => ({
+                        id: `capacity-${i.date}`,
+                        taskId: `capacity-${i.date}`,
+                        taskName: i.status === "OVERLOADED" ? `Overload on ${i.date}` : `Heavy Workload on ${i.date}`,
+                        urgency: i.status === "OVERLOADED" ? "CAPACITY_OVERLOADED" : "CAPACITY_BUSY",
+                        deadline: i.date,
+                        timestamp: new Date().toISOString(),
+                        read: false,
+                        mitigationSuggestion: i.suggestion,
+                        mitigationTaskName: i.mitigationTaskName,
+                        mitigationTargetDate: i.mitigationTargetDate
+                    }));
                 localStorage.setItem("proactive_tasks_fingerprint", currentFingerprint);
                 localStorage.setItem("proactive_capacity_alerts", JSON.stringify({
-                    alerts,
+                    alerts: capacityAlerts,
                     summary: report.overallSummary,
                     updatedAt: Date.now()
                 }));
