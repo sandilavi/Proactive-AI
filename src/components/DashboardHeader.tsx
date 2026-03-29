@@ -118,13 +118,16 @@ export default function DashboardHeader() {
       if (stored) {
         try {
           const parsed = JSON.parse(stored);
+          const validAlerts = (parsed.alerts || []).filter((a: any) => (a.totalHours || 0) > 0 && a.date);
+          parsed.alerts = validAlerts;
+
           setCapacityData(parsed);
-          setHasOverload(parsed.alerts.some((a: any) => a.status === "OVERLOADED"));
+          setHasOverload(validAlerts.some((a: any) => a.status === "OVERLOADED"));
           
           // Calculate Unread (Read vs Updated timestamp)
           const lastReadTime = Number(localStorage.getItem("proactive_last_capacity_read_timestamp") || 0);
-          if (parsed.updatedAt > lastReadTime && parsed.alerts.length > 0) {
-            setUnreadCapacityCount(parsed.alerts.length);
+          if (parsed.updatedAt > lastReadTime && validAlerts.length > 0) {
+            setUnreadCapacityCount(validAlerts.length);
           } else {
             setUnreadCapacityCount(0);
           }
@@ -222,7 +225,7 @@ export default function DashboardHeader() {
             className={`group relative p-3.5 rounded-[1.25rem] transition-all duration-300 border cursor-pointer z-20 hover:scale-105 ${
               capacityHubOpen
                 ? "bg-indigo-600 text-white border-indigo-600 shadow-xl shadow-md ring-4 ring-indigo-50"
-                : unreadCapacityCount > 0
+                : unreadCapacityCount > 0 && capacityData && capacityData.alerts.length > 0
                 ? "bg-white text-indigo-500 border-indigo-100 hover:border-indigo-300 hover:shadow-md shadow-sm"
                 : "bg-white text-slate-400 border-slate-200/60 hover:text-slate-500 hover:border-slate-300 hover:shadow-md"
             }`}
@@ -231,7 +234,7 @@ export default function DashboardHeader() {
             <div className="relative z-10">
               <Brain size={22} />
             </div>
-            {unreadCapacityCount > 0 && (
+            {unreadCapacityCount > 0 && capacityData && capacityData.alerts.length > 0 && (
               <span className="absolute -top-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-black leading-none text-white ring-4 ring-white shadow-sm animate-in zoom-in group-hover:scale-110 transition-transform z-20">
                 {unreadCapacityCount}
               </span>
@@ -263,18 +266,25 @@ export default function DashboardHeader() {
                        <p className="text-xs font-bold text-slate-400 tracking-tight">Your workload is perfectly balanced. <br /> All days are within safe capacity levels.</p>
                     </div>
                   ) : (
-                    capacityData.alerts.map((alert: any, idx: number) => {
-                      const isOverload = alert.status === "OVERLOADED";
-                      return (
-                        <div key={idx} className={`p-6 bg-white rounded-[1.75rem] border border-slate-100 shadow-sm transition-all duration-500 hover:shadow-md ${isOverload ? 'border-l-rose-500 border-l-[6px]' : 'border-l-orange-500 border-l-[6px]'}`}>
-                           <div className="flex items-center justify-between mb-4">
-                              <span className="text-xs font-black text-slate-800 tracking-tight">
-                                {new Date(alert.date).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })}
-                              </span>
-                              <span className={`text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest border ${isOverload ? 'bg-rose-50 text-rose-600 border-rose-100' : 'bg-orange-50 text-orange-600 border-orange-100'}`}>
-                                {alert.totalHours.toFixed(1)}h / {isOverload ? 'Overloaded' : 'Busy'}
-                              </span>
-                           </div>
+                    capacityData.alerts
+                      .filter((alert: any) => (alert.totalHours || 0) > 0 && alert.date) // Hide empty/broken entries
+                      .map((alert: any, idx: number) => {
+                        const isOverload = alert.status === "OVERLOADED";
+                        const dateObj = new Date(alert.date);
+                        const displayDate = isNaN(dateObj.getTime()) 
+                          ? "Upcoming Period" 
+                          : dateObj.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+
+                        return (
+                          <div key={idx} className={`p-6 bg-white rounded-[1.75rem] border border-slate-100 shadow-sm transition-all duration-500 hover:shadow-md ${isOverload ? 'border-l-rose-500 border-l-[6px]' : 'border-l-orange-500 border-l-[6px]'}`}>
+                             <div className="flex items-center justify-between mb-4">
+                                <span className="text-xs font-black text-slate-800 tracking-tight">
+                                  {displayDate}
+                                </span>
+                                <span className={`text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest border ${isOverload ? 'bg-rose-50 text-rose-600 border-rose-100' : 'bg-orange-50 text-orange-600 border-orange-100'}`}>
+                                  {(alert.totalHours || 0).toFixed(1)}h / {isOverload ? 'Overloaded' : 'Busy'}
+                                </span>
+                             </div>
 
                            {alert.suggestion && (
                              <div className={`mt-2 p-5 rounded-[1.5rem] border shadow-sm relative overflow-hidden group/sugg transition-all duration-500 ${isOverload 

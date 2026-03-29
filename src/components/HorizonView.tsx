@@ -49,7 +49,6 @@ export default function HorizonView() {
       const res = await batchCreateNotionTasks(tasksToSync);
       if (res.success) {
         setSyncSuccess(true);
-        setTimeout(() => setSyncSuccess(false), 5000); // Reset after 5s
       } else {
         alert("Export failed: " + res.error);
       }
@@ -158,7 +157,9 @@ export default function HorizonView() {
              
              <div className="absolute top-12 right-12 flex flex-col items-end">
                 <div className="text-[10px] font-black uppercase tracking-[0.3em] text-white/40 mb-1">Duration</div>
-                <div className="text-4xl font-black tabular-nums">{roadmap.tasks.length} Days</div>
+                <div className="text-4xl font-black tabular-nums">
+                  {new Set(roadmap.tasks.map(t => t.date)).size} {new Set(roadmap.tasks.map(t => t.date)).size === 1 ? 'Day' : 'Days'}
+                </div>
              </div>
              
              <Layers size={300} className="absolute -bottom-24 -right-24 text-white/5 group-hover:scale-110 group-hover:-rotate-12 transition-all duration-1000" />
@@ -211,10 +212,10 @@ export default function HorizonView() {
            </div>
            
             <div className="pt-10 text-center relative z-10">
-              <button 
+                <button 
                 onClick={handleExport}
                 disabled={syncing || syncSuccess}
-                className={`inline-flex items-center gap-3 px-12 py-5 rounded-[1.5rem] font-black uppercase tracking-[0.3em] transition-all duration-700 group border text-[11px] shadow-2xl ${syncSuccess ? "bg-emerald-50 text-emerald-600 border-emerald-100" : "bg-slate-900 text-white border-slate-800 hover:bg-blue-600 hover:-translate-y-1 active:scale-95"}`}
+                className={`inline-flex items-center gap-3 px-12 py-5 rounded-[1.5rem] font-black uppercase tracking-[0.3em] transition-all duration-700 group border text-[11px] shadow-2xl cursor-pointer disabled:cursor-not-allowed ${syncSuccess ? "bg-emerald-50 text-emerald-600 border-emerald-100" : "bg-slate-900 text-white border-slate-800 hover:bg-blue-600 hover:-translate-y-1 active:scale-95"}`}
               >
                  {syncing ? (
                     <Loader2 size={16} className="animate-spin text-blue-400" />

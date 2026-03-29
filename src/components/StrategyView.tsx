@@ -77,21 +77,35 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
         const userOffset = `${sign}${hours}:${minutes}`;
 
         const freshTasks = await fetchNotionTasks();
-        const data = await getCapacityInsights(freshTasks, userOffset);
+        
+        // Load persistent estimation memory from LocalStorage
+        const savedEstimates = JSON.parse(localStorage.getItem("proactive_task_estimates") || "{}");
+        
+        const data = await getCapacityInsights(freshTasks, userOffset, savedEstimates);
         setReport(data);
 
-        if (typeof window !== "undefined" && data) {
+        // Save any NEWLY generated estimates back to LocalStorage
+        const updatedEstimates = { ...savedEstimates };
+        data.insights.forEach(day => {
+          day.taskInsights?.forEach(t => {
+            const task = freshTasks.find(ft => ft.name === t.name);
+            if (task) updatedEstimates[`${task.id}-${task.name}`] = t.estimatedHours;
+          });
+        });
+        localStorage.setItem("proactive_task_estimates", JSON.stringify(updatedEstimates));
+
+        if (typeof window !== "undefined" && data && Array.isArray(data.insights)) {
           const alerts = data.insights.filter(i => i.status === "BUSY" || i.status === "OVERLOADED");
-          const currentFingerprint = [...freshTasks]
-            .sort((a, b) => a.id.localeCompare(b.id))
-            .map(t => `${t.id}-${t.status}-${t.name}-${t.deadline}`)
-            .join("|");
           
-          localStorage.setItem("proactive_tasks_fingerprint", currentFingerprint);
+          const lastStored = JSON.parse(localStorage.getItem("proactive_capacity_alerts") || "{}");
+          const lastAlertsStr = JSON.stringify(lastStored.alerts || []);
+          const newAlertsStr = JSON.stringify(alerts);
+          const hasStructuralChange = lastAlertsStr !== newAlertsStr;
+
           localStorage.setItem("proactive_capacity_alerts", JSON.stringify({
             alerts,
             summary: data.overallSummary,
-            updatedAt: Date.now()
+            updatedAt: hasStructuralChange ? Date.now() : (lastStored.updatedAt || Date.now())
           }));
           window.dispatchEvent(new Event('capacity-alerts-updated'));
         }
@@ -133,7 +147,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
     );
   }
 
-  const activeTasks = tasks.filter(t => t.status?.toLowerCase() !== "done");
+  const activeTasks = (tasks || []).filter(t => t.status?.toLowerCase() !== "done");
 
    return (
     <div className="space-y-10 animate-in fade-in zoom-in-95 duration-1000">
@@ -144,6 +158,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
 
          <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-10">
             <div className="space-y-6 w-full">
+               {/* UI: Global Strategic Header */}
                <div className="inline-flex items-center gap-2.5 bg-white/10 backdrop-blur-xl px-5 py-2.5 rounded-full text-[11px] font-black uppercase tracking-[0.25em] border border-white/10 shadow-2xl">
                   <Sparkles size={14} className="text-purple-400" /> Strategic Capacity Report
                </div>
@@ -158,7 +173,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                   <div className="flex flex-col border-l border-white/20 pl-8">
                     <span className="text-[10px] font-black uppercase text-white/40 tracking-[0.3em] mb-2">Critical Overloads</span>
                     <span className="text-3xl font-black tracking-tighter text-rose-400">
-                      {report.insights.filter(i => i.status === "OVERLOADED").length} Days
+                      {(report?.insights || []).filter(i => i.status === "OVERLOADED").length} Days
                     </span>
                   </div>
                </div>
@@ -196,9 +211,9 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
          <Brain size={200} className="absolute -bottom-16 -right-16 text-white/5 group-hover:scale-110 group-hover:rotate-6 transition-all duration-1000 pointer-events-none" />
       </div>
 
-      {/* Capacity Grid: Premium Analytical Cards */}
+      {/* Grid: Individual date-based analytical cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-        {report.insights.map((insight, idx) => {
+        {(report?.insights || []).map((insight, idx) => {
           const isOverload = insight.status === "OVERLOADED";
           const isBusy = insight.status === "BUSY";
           const date = new Date(insight.date);
@@ -224,11 +239,11 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                </div>
 
                <div className="flex items-baseline gap-3 mb-8">
-                  <span className="text-5xl font-black text-slate-900 tracking-tighter leading-none">{insight.totalHours.toFixed(1)}</span>
+                  <span className="text-5xl font-black text-slate-900 tracking-tighter leading-none">{(insight.totalHours || 0).toFixed(1)}</span>
                   <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">Estimated Hours</span>
                </div>
 
-               {/* Task List: Precise Ledger Style */}
+               {/* Data: Breakdown of tasks for this specific date */}
                <div className="space-y-4 mb-10 flex-1">
                   <div className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] mb-4 flex items-center gap-2">
                      <div className="w-1 h-3 bg-slate-200 rounded-full"></div>

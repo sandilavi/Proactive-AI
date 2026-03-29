@@ -8,13 +8,11 @@ interface NotionPage {
   properties: Record<string, any>;
 }
 
-// 1. Cache the database discovery process
-// This drastically speeds up page transitions (e.g. going from dashboard to strategy)
-export const discoverDatabases = unstable_cache(
-  async () => rawDiscoverDatabases(),
-  ['notion-databases'],
-  { revalidate: 300, tags: ['notion-databases'] } // Cache for 5 mins
-);
+// 1. Discover databases in real-time
+// Removing unstable_cache for zero-refresh development experience
+export async function discoverDatabases(): Promise<NotionDatabase[]> {
+  return rawDiscoverDatabases();
+}
 
 export type { NotionDatabase };
 
@@ -44,14 +42,28 @@ export async function fetchTasksFromDatabase(db: NotionDatabase) {
 import { cache } from "react";
 
 // Fetch fresh Notion tasks on every request
-// We use React.cache instead of unstable_cache so that it's 100% fresh
-// but still deduplicated if multiple components call it in one page load.
+// Persistence: Use React.cache instead of unstable_cache for fresh data parity.
+// This ensures deduplication if multiple components call it during one lifecycle.
 export const fetchNotionTasks = cache(
   async (databases?: NotionDatabase[]) => {
     const dbs = databases || await discoverDatabases();
 
     const allTaskArrays = await Promise.all(
-      dbs.map(db => fetchTasksFromDatabase(db))
+      dbs.map(async db => {
+        try {
+          return await fetchTasksFromDatabase(db);
+        } catch (e: any) {
+          console.error(`Notion Fetch Error for "${db.name}":`, e);
+
+          // NEW: Nuclear Cache Buster
+          // If the DB was deleted in Notion, we MUST invalidate the discovery cache
+          if (e?.status === 404 || e?.message?.includes('Could not find database')) {
+            revalidatePath('/', 'layout');
+          }
+
+          return []; // Fail gracefully for this specific DB
+        }
+      })
     );
 
     const tasks = allTaskArrays.flat();

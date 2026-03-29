@@ -5,7 +5,7 @@ import { fetchNotionTasks, NotionDatabase } from "@/app/actions/notion-actions";
 import { X, Zap, Trash2, AlertTriangle, Check, Bell, BellRing, Clock, Brain, Sparkles, Activity } from "lucide-react";
 
 // Proactive Notification Timer
-const TASK_SYNC_INTERVAL       = 5  * 60 * 1000; // 5 minutes
+const TASK_SYNC_INTERVAL       = 2  * 60 * 1000; // 2 minutes
 
 interface ProactiveAlert {
   id: string;
@@ -147,12 +147,16 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
       const lastFetchDay = localStorage.getItem("proactive_last_fetch_day");
       const isSameDay = lastFetchDay === todayStr;
       
-      // CRITICAL: We only re-fetch if tasks changed OR it's a new day (past midnight).
-      // If tasks are identical and it's the same day, we persist the suggestion indefinitely.
+      // Logic: Only re-fetch if tasks changed OR it's a new day (past midnight).
+      // If tasks are identical and it's the same day, persist the suggestion.
       if (cached && isTaskListSame && isSameDay) {
         try {
           const parsed = JSON.parse(cached);
           if (parsed && parsed.suggestion && typeof parsed.confidence === "number" && parsed.priority) {
+            // Apply the fallback in case this was cached before the feature was added
+            if (!parsed.updatedAt) {
+              parsed.updatedAt = parseInt(lastFetch || Date.now().toString(), 10);
+            }
             setSuggestion(parsed);
             return;
           }
@@ -184,18 +188,18 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
               const isSameTask = old && old.suggestion === newSuggestion.suggestion && old.priority === newSuggestion.priority && isSameDay;
               
               if (isSameTask) {
-                const confDiff = Math.abs((old.confidence || 0) - (newSuggestion.confidence || 0));
+                // If it's the exact same advice (even if confidence changed), preserve the original time
+                finalSuggestion.updatedAt = old.updatedAt || parseInt(lastFetch || Date.now().toString(), 10);
                 
+                const confDiff = Math.abs((old.confidence || 0) - (newSuggestion.confidence || 0));
                 if (confDiff < 0.15) {
                   // Minor shift: Use old text AND old confidence to keep UI "frozen"
                   finalSuggestion = {
-                    ...newSuggestion,
+                    ...finalSuggestion,
                     reason: old.reason,
                     confidence: old.confidence,
                     thinkContext: old.thinkContext ?? newSuggestion.thinkContext
                   };
-                } else {
-                  // Major shift: Let the new suggestion flow through (FinalSuggestion is already newSuggestion)
                 }
               }
             } catch {
@@ -229,9 +233,8 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
   const [proactiveThinkOpen, setProactiveThinkOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Background task sync - silently re-fetch Notion tasks every 60 seconds
-  // Only updates the task table when it is currently visible (taskList !== null)
-  // Skips update during confirmation flow to avoid disrupting the user
+  // Background Sync: silents re-fetches Notion tasks every interval.
+  // Updates the task table if visible, skipping during confirmation flow.
   useEffect(() => {
     const syncTasks = async () => {
       try {
@@ -349,7 +352,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
       {suggestion && !message && !pendingDecision && status === "idle" && (() => {
          // Local narrow to satisfy TS
          const currentSug = suggestion;
-         const dateStr = new Date().toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' });
+         const dateStr = new Date(currentSug.updatedAt || Date.now()).toLocaleString([], { month: 'short', day: 'numeric' }) + ", " + new Date(currentSug.updatedAt || Date.now()).toLocaleString([], { hour: 'numeric', minute: '2-digit' });
          const p = (currentSug.priority || "MEDIUM").toUpperCase();
          
          const pStyle = 
@@ -378,7 +381,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
              gradient: "from-blue-500 to-blue-400" 
            } :
            p === "LOW"      ? { 
-             card: "bg-zinc-900 border-zinc-700 shadow-zinc-950/40", 
+             card: "bg-zinc-800 border-zinc-700 shadow-zinc-950/40", 
              text: "text-zinc-500/80", 
              bg: "bg-zinc-500/20",
              border: "border-zinc-500/30",
@@ -413,7 +416,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                          </div>
                        </div>
                        <div className="text-[11px] font-black text-white/40 uppercase tracking-[0.2em] pl-1">
-                          Calculated for {dateStr}
+                          Generated at {dateStr}
                        </div>
                     </div>
                     
@@ -582,7 +585,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                    </div>
                  )}
 
-                 {/* Confirmation / Message Content Area */}
+                 {/* UI: Confirmation / Message Content Area */}
                  <div className="px-8 pb-8 pt-2">
                    {pendingDecision ? (
                       <div className="animate-in fade-in slide-in-from-top-2 duration-300">

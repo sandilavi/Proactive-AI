@@ -3,7 +3,7 @@ import { useEffect, useCallback, useRef } from "react";
 import { fetchNotionTasks } from "@/app/actions/notion-actions";
 import { getCapacityInsights } from "@/app/actions/agent-actions";
 
-const NOTIFICATION_INTERVAL = 5 * 60 * 1000; // 5 minutes
+const NOTIFICATION_INTERVAL = 2 * 60 * 1000; // 2 minutes
 
 interface ProactiveAlert {
   id: string;
@@ -18,25 +18,6 @@ interface ProactiveAlert {
   mitigationSuggestion?: string;
   mitigationTaskName?: string;
   mitigationTargetDate?: string;
-}
-
-function classifyDeadline(deadline: string): ProactiveAlert["urgency"] | null {
-  if (!deadline || deadline === "No Deadline") return null;
-  const now = new Date();
-  const deadlineDate = new Date(deadline);
-  const hasTime = deadline.includes("T");
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const deadlineDay = new Date(deadlineDate); deadlineDay.setHours(0, 0, 0, 0);
-  if (isNaN(deadlineDay.getTime())) return null;
-  const diffDays = Math.round((deadlineDay.getTime() - today.getTime()) / 86400000);
-  if (diffDays < 0) return "OVERDUE";
-  if (diffDays === 0) {
-    if (hasTime && deadlineDate < now) return "OVERDUE";
-    return "TODAY";
-  }
-  if (diffDays === 1) return "TOMORROW";
-  if (diffDays >= 2 && diffDays <= 3) return "SOON";
-  return null;
 }
 
 export default function AgentEngine() {
@@ -164,7 +145,7 @@ export default function AgentEngine() {
         
         activeToastsRef.current = sorted;
 
-        // 3. Strategic Capacity Monitor: Detect burnout risk
+        // Logic: Monitor capacity state and trigger notifications on change.
         const storedFingerprint = localStorage.getItem("proactive_tasks_fingerprint");
         
         if (currentFingerprint !== storedFingerprint) {
@@ -174,29 +155,55 @@ export default function AgentEngine() {
             const minutes = (Math.abs(offsetMinutes) % 60).toString().padStart(2, '0');
             const userOffset = `${sign}${hours}:${minutes}`;
 
-            const report = await getCapacityInsights(freshTasks, userOffset);
+            // Sync: Load persistent durations from local vault.
+            const savedEstimates = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("proactive_task_estimates") || "{}") : {};
+
+            const report = await getCapacityInsights(freshTasks, userOffset, savedEstimates);
             if (report && report.insights && report.overallSummary) {
+                // Persistence: Write fresh durations to the local vault.
+                const updatedEstimates = { ...savedEstimates };
+                report.insights.forEach(day => {
+                   day.taskInsights?.forEach(t => {
+                     const task = freshTasks.find(ft => ft.name === t.name);
+                     if (task) updatedEstimates[`${task.id}-${task.name}`] = t.estimatedHours;
+                   });
+                });
+                if (typeof window !== "undefined") {
+                   localStorage.setItem("proactive_task_estimates", JSON.stringify(updatedEstimates));
+                }
+
+                const results = report.insights.filter(i => i.status === "BUSY" || i.status === "OVERLOADED");
+                
                 // Add capacity-specific insights
-                const capacityAlerts: ProactiveAlert[] = report.insights
-                    .filter(i => i.status === "BUSY" || i.status === "OVERLOADED")
-                    .map(i => ({
-                        id: `capacity-${i.date}`,
-                        taskId: `capacity-${i.date}`,
-                        taskName: i.status === "OVERLOADED" ? `Overload on ${i.date}` : `Heavy Workload on ${i.date}`,
-                        urgency: i.status === "OVERLOADED" ? "CAPACITY_OVERLOADED" : "CAPACITY_BUSY",
-                        deadline: i.date,
-                        timestamp: new Date().toISOString(),
-                        read: false,
-                        mitigationSuggestion: i.suggestion,
-                        mitigationTaskName: i.mitigationTaskName,
-                        mitigationTargetDate: i.mitigationTargetDate
-                    }));
+                const capacityAlerts: any[] = results.map(i => ({
+                    id: `capacity-${i.date}`,
+                    taskId: `capacity-${i.date}`,
+                    taskName: i.status === "OVERLOADED" ? `Overload on ${i.date}` : `Heavy Workload on ${i.date}`,
+                    urgency: i.status === "OVERLOADED" ? "CAPACITY_OVERLOADED" : "CAPACITY_BUSY",
+                    deadline: i.date,
+                    timestamp: new Date().toISOString(),
+                    suggestion: i.suggestion,
+                    mitigationSuggestion: i.suggestion,
+                    mitigationTaskName: i.mitigationTaskName,
+                    mitigationTargetDate: i.mitigationTargetDate,
+                    totalHours: i.totalHours,
+                    status: i.status,
+                    date: i.date // CRITICAL: Required by DashboardHeader filter
+                }));
+
                 localStorage.setItem("proactive_tasks_fingerprint", currentFingerprint);
+                
+                // CRITICAL: Only update the 'updatedAt' timestamp if we actually HAVE alerts to show.
+                // This prevents "Ghost Notifications" from appearing when there's nothing to see.
+                const lastData = JSON.parse(localStorage.getItem("proactive_capacity_alerts") || "{}");
+                const hasNewAlerts = capacityAlerts.length > 0;
+                
                 localStorage.setItem("proactive_capacity_alerts", JSON.stringify({
                     alerts: capacityAlerts,
                     summary: report.overallSummary,
-                    updatedAt: Date.now()
+                    updatedAt: hasNewAlerts ? Date.now() : (lastData.updatedAt || Date.now())
                 }));
+                
                 window.dispatchEvent(new Event('capacity-alerts-updated'));
             }
         }
