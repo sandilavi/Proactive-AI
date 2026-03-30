@@ -64,13 +64,15 @@ function extractJSON<T>(raw: string): T | null {
   try {
     let clean = raw.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
 
-    // Priority 1: Markdown blocks
-    const codeBlockMatch = clean.match(/```json\n?([\s\S]*?)\n?```/) || clean.match(/```([\s\S]*?)```/);
-    if (codeBlockMatch) {
-      try { return JSON.parse(codeBlockMatch[1].trim()) as T; } catch (e) { }
-    }
+    // Global markdown cleanup (strips nested code blocks)
+    clean = clean.replace(/```json/gi, "").replace(/```/g, "").trim();
 
-    // Priority 2: Scan for valid JSON object boundaries
+    // Auto-fix trailing commas (a common LLM hallucination in strict JSON mode)
+    clean = clean.replace(/,\s*([}\]])/g, '$1');
+
+    try { return JSON.parse(clean) as T; } catch (e) { }
+
+    // Fallback: Scan for valid JSON object boundaries
     const lastBraceIndex = clean.lastIndexOf('}');
     if (lastBraceIndex !== -1) {
       let firstBraceIndex = clean.indexOf('{');
@@ -617,6 +619,8 @@ export async function confirmAction(decision: AgentResponse) {
 
 const capacityReportCache = new Map<string, CapacityReport>();
 
+let rateLimitCooldownUntil = 0;
+
 /**
  * Persistent memory for task estimations.
  * This prevents the "Shifting Times" bug where marking a task as done
@@ -630,6 +634,14 @@ export async function getCapacityInsights(
   persistentMemory?: Record<string, number>
 ): Promise<CapacityReport> {
   const today = new Date().toISOString().split("T")[0];
+
+  if (Date.now() < rateLimitCooldownUntil) {
+    const remainingSeconds = Math.ceil((rateLimitCooldownUntil - Date.now()) / 1000);
+    return {
+      insights: [],
+      overallSummary: `AI Rate Limit Cooldown. The system is resting to prevent quota errors. Please wait ${remainingSeconds}s...`,
+    };
+  }
 
   // 1. Load provided memory into the current execution
   if (persistentMemory) {
@@ -656,7 +668,11 @@ export async function getCapacityInsights(
     .join("|");
 
   if (capacityReportCache.has(taskFingerprint)) {
-    return capacityReportCache.get(taskFingerprint)!;
+    const cached = capacityReportCache.get(taskFingerprint)!;
+    // Safety check: if the cached report is empty, force a re-fetch rather than showing "No active tasks"
+    if (cached.insights && cached.insights.length > 0) {
+      return cached;
+    }
   }
 
   const result = await runCapacityAnalysis(taskFingerprint, tasks, userOffset);
@@ -675,7 +691,11 @@ export async function getCapacityInsights(
     });
   }
 
-  capacityReportCache.set(taskFingerprint, result);
+  // Only cache if the report actually contains data to avoid permanent empty-state locks.
+  if (result && result.insights && result.insights.length > 0) {
+    capacityReportCache.set(taskFingerprint, result);
+  }
+
   return result;
 }
 
@@ -711,8 +731,8 @@ async function runCapacityAnalysis(_fingerprint: string, tasks: NotionTask[], us
 
             RULES:
             1. Group tasks by date.
-            2. ESTIMATION MEMORY: Every task list entry may have [Estimation Memory: X.Xh]. If you see this, you MUST use that exact number. DO NOT re-calculate it.
-            3. MITIGATION: For BUSY or OVERLOADED days (>8h), you MUST suggest moving one specific task to a nearby date that is currently SAFE (<8h). 
+            2. ESTIMATION MEMORY: Every task list entry may have [Estimation Memory: X.Xh]. If you see this, you MUST use that exact number. DO NOT re-calculate it. If no memory exists, estimate a reasonable duration based on the task name (default to 1-4 hours).
+            3. MITIGATION: For BUSY or OVERLOADED days (>8h), suggest moving one specific task to a nearby date to balance the load. (If no dates are entirely SAFE, pick the least busy nearby date, or push to next week).
             4. Suggestion MUST follow this format: "Move [Task Name] to [Target Date] to reduce load."
             5. mitigationTaskName MUST be the exact name of the task to move.
             6. mitigationTargetDate MUST be the YYYY-MM-DD date to move it to.
@@ -737,7 +757,11 @@ async function runCapacityAnalysis(_fingerprint: string, tasks: NotionTask[], us
       ]
     });
     raw = response.choices[0]?.message?.content || "";
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.status === 429 || error?.message?.includes("Rate limit")) {
+      rateLimitCooldownUntil = Date.now() + 15000; // 15 seconds backoff
+      return { insights: [], overallSummary: "Groq AI Rate Limit hit! Pausing analysis for 15 seconds to recover tokens..." };
+    }
     console.error("Groq API Error running Capacity Analysis:", error);
     return { insights: [], overallSummary: "API Error: Please wait a minute before analyzing capacity again." };
   }

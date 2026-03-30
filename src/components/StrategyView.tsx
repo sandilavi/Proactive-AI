@@ -142,7 +142,12 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
       <div className="text-center py-24 bg-white rounded-[3rem] border border-slate-100 shadow-sm">
         <LayoutDashboard className="mx-auto text-slate-200 mb-6" size={64} />
         <h3 className="text-xl font-bold text-slate-800 mb-2">No Active Tasks Found</h3>
-        <p className="max-w-xs mx-auto text-sm text-slate-500">Add chores or projects to your Notion databases to enable strategic analysis.</p>
+        <p className="max-w-xs mx-auto text-sm text-slate-500 mb-4">Add chores or projects to your Notion databases to enable strategic analysis.</p>
+        {report?.overallSummary && report.overallSummary !== "Your schedule is clear!" && (
+          <div className="max-w-md mx-auto p-4 bg-red-50 border border-red-100 rounded-2xl text-red-600 text-sm font-medium">
+            <p>System Diagnostic: {report.overallSummary}</p>
+          </div>
+        )}
       </div>
     );
   }
