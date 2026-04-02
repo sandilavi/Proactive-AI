@@ -47,12 +47,14 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
 
         // Save any NEWLY generated estimates back to LocalStorage
         const updatedEstimates = { ...savedEstimates };
-        data.insights.forEach(day => {
-          day.taskInsights?.forEach(t => {
-            const task = freshTasks.find(ft => ft.name === t.name);
-            if (task) updatedEstimates[`${task.id}-${task.name}`] = t.estimatedHours;
+        if (data?.insights) {
+          data.insights.forEach(day => {
+            day.taskInsights?.forEach(t => {
+              const task = freshTasks.find(ft => ft.name === t.name);
+              if (task) updatedEstimates[`${task.id}-${task.name}`] = t.estimatedHours;
+            });
           });
-        });
+        }
         localStorage.setItem("proactive_task_estimates", JSON.stringify(updatedEstimates));
 
         if (typeof window !== "undefined" && data && Array.isArray(data.insights)) {
@@ -86,6 +88,20 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
 
     return () => window.removeEventListener('notion-tasks-updated', handleSync);
   }, [tasks, initialReport]);
+
+  // AUTO-RETRY: Detect rate limits and self-heal automatically
+  useEffect(() => {
+    if (report?.overallSummary?.includes("Rate Limit hit")) {
+      const match = report.overallSummary.match(/wait (\d+)s/);
+      if (match) {
+        const seconds = parseInt(match[1]);
+        const timeout = setTimeout(() => {
+          fetchInsightsRef.current();
+        }, seconds * 1000 + 500); // Wait the stated time + 0.5s buffer
+        return () => clearTimeout(timeout);
+      }
+    }
+  }, [report?.overallSummary]);
 
   if (loading) {
     return (
@@ -179,52 +195,119 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
       {/* Grid: Individual date-based analytical cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
         {(() => {
-          // Generate a consistent 2-day window starting from Today
           const now = new Date();
-          const timeline = Array.from({ length: 2 }, (_, i) => {
-            const d = new Date(now);
-            d.setDate(now.getDate() + i);
-            const dateStr = d.toISOString().split('T')[0];
-            
-            // Look for existing insight from the AI
-            const existing = report.insights.find(ins => ins.date === dateStr);
-            if (existing) return existing;
-            
-            // Otherwise, create a placeholder for the empty day
+          // Use local date to avoid UTC timezone mismatch
+          // Build a task-name -> estimatedHours lookup from ALL AI insights
+          const taskHoursMap = new Map<string, number>();
+          // Pull from historical cache if the server provided it
+          if (report?.knownEstimations) {
+            Object.entries(report.knownEstimations).forEach(([name, hours]) => {
+              taskHoursMap.set(name, hours);
+            });
+          }
+          // Also pull from current insights just in case
+          if (report?.insights) {
+            report.insights.forEach(ins => {
+              ins.taskInsights?.forEach(ti => {
+                if (ti.estimatedHours > 0) taskHoursMap.set(ti.name, ti.estimatedHours);
+              });
+            });
+          }
+          const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+
+          // Normalize any Notion date format ('April 3, 2026' or ISO) → 'YYYY-MM-DD'
+          const normalizeDate = (deadline: string): string => {
+            const parsed = new Date(deadline);
+            if (!isNaN(parsed.getTime())) {
+              return `${parsed.getFullYear()}-${String(parsed.getMonth()+1).padStart(2,'0')}-${String(parsed.getDate()).padStart(2,'0')}`;
+            }
+            return deadline.split('T')[0]; // Fallback for already-formatted ISO strings
+          };
+
+          // 1. Derive the full set of dates from RAW TASKS (source of truth)
+          const activeTasks = tasks.filter(t => t.status?.toLowerCase() !== 'done' && t.deadline && t.deadline !== 'No Deadline');
+          const uniqueDates = [...new Set(activeTasks.map(t => normalizeDate(t.deadline!)))];
+          
+          // 2. Always include Today even if empty
+          if (!uniqueDates.includes(todayStr)) {
+            uniqueDates.push(todayStr);
+          }
+
+          // 3. Build display list: merge task dates with AI insights
+          const displayList = uniqueDates.map(dateStr => {
+            // Try to find AI insight for this date
+            const aiInsight = report?.insights.find(ins => ins.date === dateStr);
+            if (aiInsight) return aiInsight;
+
+            // Fallback: build a placeholder from raw tasks + cached AI hours
+            const dayTasks = activeTasks.filter(t => normalizeDate(t.deadline!) === dateStr);
+            const taskInsights = dayTasks.map(t => ({
+              name: t.name,
+              estimatedHours: taskHoursMap.get(t.name) || 0
+            }));
+            const totalHours = taskInsights.reduce((sum, t) => sum + t.estimatedHours, 0);
             return {
               date: dateStr,
-              totalHours: 0,
-              status: "SAFE" as const,
-              taskInsights: []
+              totalHours,
+              status: totalHours >= 12 ? "OVERLOADED" as const : totalHours >= 9 ? "BUSY" as const : "SAFE" as const,
+              taskInsights
             };
           });
 
-          // Prepend any "OVERDUE" or "PAST DUE" items from the AI that aren't in our 7-day future window
-          const overdue = report.insights.filter(ins => {
-            const insDate = new Date(ins.date);
-            const todayDate = new Date(now.toISOString().split('T')[0]);
-            return insDate < todayDate || isNaN(insDate.getTime());
+          // 4. Sort chronologically (overdue/invalid at the top)
+          const sortedList = displayList.sort((a, b) => {
+            const dateA = new Date(a.date).getTime();
+            const dateB = new Date(b.date).getTime();
+            if (isNaN(dateA)) return -1;
+            if (isNaN(dateB)) return 1;
+            return dateA - dateB;
           });
 
-          const finalDisplayList = [...overdue, ...timeline];
-
-          return finalDisplayList.map((insight, idx) => {
+          return sortedList.map((insight, idx) => {
             const isOverload = insight.status === "OVERLOADED";
             const isBusy = insight.status === "BUSY";
             const date = new Date(insight.date);
             const isInvalid = isNaN(date.getTime());
-            // Safe date string comparison for "Today"
-            const todayStr = new Date().toISOString().split('T')[0];
-            const isToday = !isInvalid && date.toISOString().split('T')[0] === todayStr;
+
+            const getLocalDateTimestamp = (d: Date) => {
+              const nd = new Date(d);
+              nd.setHours(0, 0, 0, 0);
+              return nd.getTime();
+            };
+
+            const todayTimestamp = getLocalDateTimestamp(new Date());
+            const insightTimestamp = !isInvalid ? getLocalDateTimestamp(date) : 0;
+            
+            const isOverdue = !isInvalid && insightTimestamp < todayTimestamp;
+            const isToday = !isInvalid && insightTimestamp === todayTimestamp;
+            const isTomorrow = !isInvalid && insightTimestamp === (todayTimestamp + 86400000);
 
             return (
-              <div key={idx} className={`bg-white/70 backdrop-blur-xl rounded-[2.5rem] border border-slate-100 p-10 shadow-sm transition-all duration-500 relative overflow-hidden flex flex-col group hover:shadow-[0_45px_70px_-25px_rgba(0,0,0,0.12)] hover:-translate-y-4 ${isOverload ? 'border-b-rose-200' : 'border-b-slate-200/50'}`}>
+              <div 
+                key={idx} 
+                className={`bg-white rounded-[3rem] p-10 transition-all duration-500 relative overflow-hidden flex flex-col group cursor-default
+                  hover:-translate-y-3
+                  ${isToday 
+                    ? 'border-[2px] border-slate-900 shadow-xl hover:shadow-2xl' 
+                    : 'border border-slate-100 shadow-sm hover:shadow-md'
+                  } 
+                  ${isOverload ? 'bg-rose-50/10' : 'bg-white/70 backdrop-blur-xl'}
+                `}
+              >
                  {isOverload && <div className="absolute top-0 left-0 w-full h-2 bg-rose-500" />}
                  
                  <div className="flex items-center justify-between mb-8">
                     <div className="flex flex-col">
-                      <span className={`text-[10px] font-black uppercase tracking-[0.3em] mb-1 leading-none ${isToday ? 'text-purple-600' : 'text-slate-400'}`}>
-                        {isToday ? "TODAY" : isInvalid ? "OVERDUE" : date.toLocaleDateString([], { weekday: 'long' })}
+                      <span className={`font-black uppercase tracking-[0.3em] mb-1 leading-none 
+                        ${isToday ? 'text-[22px] text-purple-600' : isOverdue || isInvalid ? 'text-[22px] text-rose-600' : 'text-[10px] text-slate-400'}
+                      `}>
+                        {isToday 
+                          ? "TODAY" 
+                          : isOverdue || isInvalid 
+                          ? "OVERDUE" 
+                          : isTomorrow 
+                          ? "TOMORROW" 
+                          : date.toLocaleDateString([], { weekday: 'long' })}
                       </span>
                       <span className="text-2xl font-black text-slate-900 tracking-tighter uppercase leading-none">
                         {isInvalid ? "Past Due" : date.toLocaleDateString([], { month: 'short', day: 'numeric' })}

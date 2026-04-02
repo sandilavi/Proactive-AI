@@ -46,7 +46,7 @@ export interface CapacityInsight {
   date: string;
   totalHours: number;
   status: "SAFE" | "BUSY" | "OVERLOADED";
-  taskInsights?: Array<{ name: string; estimatedHours: number }>;
+  taskInsights?: Array<{ id: string; name: string; estimatedHours: number }>;
   suggestion?: string;
   // Structured fields for the Accept/Reject action buttons
   mitigationTaskName?: string;   // The exact task name to move
@@ -57,39 +57,45 @@ export interface CapacityReport {
   insights: CapacityInsight[];
   overallSummary: string;
   thinkContext?: string;
+  knownEstimations?: Record<string, number>;
 }
 
 // Utility: Validates and parses JSON from the AI (strips reasoning blocks and markdown).
 function extractJSON<T>(raw: string): T | null {
   try {
+    // Layer 1: Strip closed <think> blocks
     let clean = raw.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
 
-    // Global markdown cleanup (strips nested code blocks)
-    clean = clean.replace(/```json/gi, "").replace(/```/g, "").trim();
-
-    // Auto-fix trailing commas (a common LLM hallucination in strict JSON mode)
-    clean = clean.replace(/,\s*([}\]])/g, '$1');
-
-    try { return JSON.parse(clean) as T; } catch (e) { }
-
-    // Fallback: Scan for valid JSON object boundaries
-    const lastBraceIndex = clean.lastIndexOf('}');
-    if (lastBraceIndex !== -1) {
-      let firstBraceIndex = clean.indexOf('{');
-      // Scan forward from potential openers until we find a valid parse
-      while (firstBraceIndex !== -1 && firstBraceIndex < lastBraceIndex) {
-        const potentialJson = clean.substring(firstBraceIndex, lastBraceIndex + 1);
-        try {
-          return JSON.parse(potentialJson) as T;
-        } catch (e) {
-          firstBraceIndex = clean.indexOf('{', firstBraceIndex + 1);
-        }
-      }
+    // Layer 2: Handle UNCLOSED <think> tags (truncated response) 
+    // If <think> exists but no </think>, strip from <think> to end
+    if (clean.includes('<think>')) {
+      clean = clean.replace(/<think>[\s\S]*/g, "").trim();
     }
 
-    // Scrub: Remove LLM hallucinations of the prompt placeholder template.
-    if (clean.includes("[Task Name]") || clean.includes("[Target Date]")) {
-      return null;
+    // Layer 3: Also try extracting JSON from the RAW string directly
+    // (in case the entire response is just the think block + JSON after it)
+    const rawJsonMatch = raw.match(/\{[\s\S]*"insights"[\s\S]*\}/);
+    const candidates = [clean, rawJsonMatch?.[0] || ""].filter(Boolean);
+
+    for (const candidate of candidates) {
+      let c = candidate.replace(/```json/gi, "").replace(/```/g, "").trim();
+      // Layer 4: Deep Scan - Regex for the boundaries of the FIRST object that looks like our data
+      const deepMatch = c.match(/\{\s*"insights"[\s\S]*\}/);
+      if (deepMatch) {
+        let dm = deepMatch[0].replace(/,\s*([}\]])/g, '$1');
+        try { return JSON.parse(dm) as T; } catch (e) { }
+      }
+
+      // Layer 5: Bracket Hunter - Scan for valid JSON object boundaries
+      c = c.replace(/,\s*([}\]])/g, '$1');
+      try { return JSON.parse(c) as T; } catch (e) { }
+
+      const firstCurly = c.indexOf('{');
+      const lastCurly = c.lastIndexOf('}');
+      if (firstCurly !== -1 && lastCurly !== -1 && lastCurly > firstCurly) {
+        const slice = c.substring(firstCurly, lastCurly + 1);
+        try { return JSON.parse(slice) as T; } catch (e) { }
+      }
     }
 
     return null;
@@ -723,14 +729,24 @@ async function runCapacityAnalysis(_fingerprint: string, tasks: NotionTask[], us
   const taskContext = tasks
     .filter(t => t.status?.toLowerCase() !== "done")
     .map(t => {
-      const cached = taskEstimationCache.get(`${t.id}-${t.name}`);
+      // Resilient Lookup: Try exact ID-Name first, fallback to Name-only if task was recreated
+      let cached = taskEstimationCache.get(`${t.id}-${t.name}`);
+      if (cached === undefined) {
+        // Find any entry in the cache that matches this exact task name
+        for (const [key, val] of taskEstimationCache.entries()) {
+          if (key.endsWith(`-${t.name}`)) {
+            cached = val;
+            break;
+          }
+        }
+      }
       const memTag = cached ? ` [Estimation Memory: ${cached.toFixed(1)}h]` : "";
 
       // Overdue Labeling: Help the AI identify tasks past their deadline
       const isOverdue = t.deadline && t.deadline !== "No Deadline" && t.deadline < today;
       const overdueTag = isOverdue ? " (OVERDUE)" : "";
 
-      return `- Name: "${t.name}", Status: "${t.status}", Deadline: "${t.deadline}"${overdueTag}${memTag}`;
+      return `- ID: "${t.id}", Name: "${t.name}", Status: "${t.status}", Deadline: "${t.deadline}"${overdueTag}${memTag}`;
     })
     .join("\n");
 
@@ -738,28 +754,24 @@ async function runCapacityAnalysis(_fingerprint: string, tasks: NotionTask[], us
     return { insights: [], overallSummary: "Your schedule is clear!" };
   }
 
-  let raw = "";
-  try {
+  const runAnalysis = async (): Promise<string> => {
     const response = await groq.chat.completions.create({
       model: GROQ_MODEL,
       temperature: 0,
+      max_tokens: 4096,
       messages: [
         {
           role: "system",
           content: `You are a Capacity Planning Agent. Today is ${today}. 
             Analyze the task list and provide a Strategic Intelligence Report.
+            IMPORTANT: Keep your reasoning VERY brief. Output the JSON immediately.
 
             RULES:
-            1. GROUPING: Every unique deadline in the task list MUST have an entry in "insights". 
-            2. OVERDUE: Tasks before ${today} MUST stay grouped under their original date.
-            3. ESTIMATION MEMORY: [Task Name] [Estimation Memory: X.Xh]. If you see this, you MUST use that exact number.
-            4. THRESHOLDS: SAFE < 9.0, BUSY 9.0 - 11.9, OVERLOADED >= 12.0.
-            5. STRATEGIC SUGGESTION: Write mitigations in natural, human-level English. (Example: "I've flagged tomorrow's 14-hour overload. Let's pull the Grammar Edits forward into today's empty slot to give you breathing room for the core thesis work."). NO TEMPLATES. NO BRACKETS.
-            6. DISPLACEMENT: mitigationTargetDate MUST be DIFFERENT from the overloaded date.
-            7. URGENT PRIORITY: Protect Today and Tomorrow. Move the LEAST URGENT task (furthest deadline) first.
-            8. DEADLINE PRESERVATION: Only move a task AFTER its deadline as an absolute last resort. Prefer pulling work earlier.
-            9. mitigationTaskName MUST be exact Task Name.
-            10. mitigationTargetDate MUST be YYYY-MM-DD.
+            - DATA REALITY: You MUST create an entry in "insights" for EVERY unique deadline date provided. A task MUST ONLY appear in the entry that matches its current deadline. DO NOT pre-emptively move tasks between arrays in the JSON. Group exactly by current deadline.
+            - METRICS: Use exact [Estimation Memory: X.Xh] if present. If MISSING, you MUST generate a realistic duration (0.5 to 8h) based on task complexity. Returning 0.0 is a CRITICAL FAILURE. 
+            - RELOCATIONS: Prevent OVERLOADED days by moving ONE task to the nearest SAFE date. You MUST move the task to a DIFFERENT day.
+            - FORMATTING: "mitigationTaskName" = exact original name. "mitigationTargetDate" = YYYY-MM-DD.
+            - SUGGESTION TEXT: Write in a highly conversational, proactive, human tone (e.g., 'I noticed Apr 3 is heavily overloaded. Let us pull Grammar Edits to Apr 2 to free up your schedule'). Use short dates. ONLY use single-quotes, NEVER double-quotes inside text.
 
             OUTPUT strict JSON:
             {
@@ -768,7 +780,7 @@ async function runCapacityAnalysis(_fingerprint: string, tasks: NotionTask[], us
                   "date": "YYYY-MM-DD",
                   "totalHours": 0.0,
                   "status": "SAFE|BUSY|OVERLOADED",
-                  "taskInsights": [{ "name": "", "estimatedHours": 0.0 }],
+                  "taskInsights": [{ "id": "task_id", "name": "Exact Name", "estimatedHours": 0.0 }],
                   "suggestion": "Actionable suggestion text",
                   "mitigationTaskName": "Exact Task Name",
                   "mitigationTargetDate": "YYYY-MM-DD"
@@ -780,43 +792,75 @@ async function runCapacityAnalysis(_fingerprint: string, tasks: NotionTask[], us
         { role: "user", content: `Existing Tasks:\n${taskContext}` }
       ]
     });
-    raw = response.choices[0]?.message?.content || "";
+    return response.choices[0]?.message?.content || "";
+  };
+
+  // Retry Logic: If first attempt fails to parse, retry once
+  let raw = "";
+  try {
+    raw = await runAnalysis();
   } catch (error: any) {
     if (error?.status === 429 || error?.message?.includes("Rate limit")) {
-      rateLimitCooldownUntil = Date.now() + 15000; // 15 seconds backoff
+      rateLimitCooldownUntil = Date.now() + 15000;
       return { insights: [], overallSummary: "Groq AI Rate Limit hit! Pausing analysis for 15 seconds to recover tokens..." };
     }
     console.error("Groq API Error running Capacity Analysis:", error);
     return { insights: [], overallSummary: "API Error: Please wait a minute before analyzing capacity again." };
   }
   const thinkMatch = raw.match(/<think>([\s\S]*?)<\/think>/);
-  const thinkContext = thinkMatch ? thinkMatch[1].trim() : "";
+  let thinkContext = thinkMatch ? thinkMatch[1].trim() : "";
 
-  const report = extractJSON<CapacityReport>(raw);
+  let report = extractJSON<CapacityReport>(raw);
+
+  // Auto-Retry: If first parse fails (truncated think block, etc.), retry once
+  if (!report || !report.insights) {
+    try {
+      raw = await runAnalysis();
+      const retryThink = raw.match(/<think>([\s\S]*?)<\/think>/);
+      if (retryThink) thinkContext = retryThink[1].trim();
+      report = extractJSON<CapacityReport>(raw);
+    } catch (retryErr) {
+      console.error("Retry failed:", retryErr);
+    }
+  }
 
   if (report && report.insights) {
     // Logic: Enforce persistent durations and recalibrate mathematical totals.
     report.insights = report.insights.map(day => {
       const insights = day.taskInsights;
       if (insights && insights.length > 0) {
-        insights.forEach(tInsight => {
-          const matchedOriginal = tasks.find(ot => ot.name === tInsight.name);
+        // Truth Guard: Ensure AI hasn't pre-emptively moved the task in its report
+        const filteredInsights = insights.filter(tInsight => {
+          const matchedOriginal = tasks.find(ot => ot.id === tInsight.id || ot.name === tInsight.name);
+          if (!matchedOriginal) return true;
+
+          const normalize = (d: string) => d.includes('T') ? d.split('T')[0] : new Date(d).toISOString().split('T')[0];
+          return normalize(matchedOriginal.deadline || "") === day.date;
+        });
+
+        filteredInsights.forEach(tInsight => {
+          const matchedOriginal = tasks.find(ot => ot.id === tInsight.id || ot.name === tInsight.name);
           if (matchedOriginal) {
             const cachedKey = `${matchedOriginal.id}-${matchedOriginal.name}`;
             const lockedEstimate = taskEstimationCache.get(cachedKey);
             if (lockedEstimate !== undefined) {
               tInsight.estimatedHours = lockedEstimate;
-            } else if (tInsight.estimatedHours) {
+            } else if (tInsight.estimatedHours && tInsight.estimatedHours > 0) {
               taskEstimationCache.set(cachedKey, tInsight.estimatedHours);
             }
           }
+          // Universal Safety Net: Catch ALL 0H tasks, even those with name mismatches
+          if (!tInsight.estimatedHours || tInsight.estimatedHours <= 0) {
+            tInsight.estimatedHours = 2.0;
+          }
         });
 
-        const actualTotal = insights.reduce((sum, task) => sum + (task.estimatedHours || 0), 0);
+        const actualTotal = filteredInsights.reduce((sum, task) => sum + (task.estimatedHours || 0), 0);
         return {
           ...day,
+          taskInsights: filteredInsights,
           totalHours: actualTotal,
-          status: actualTotal > 10 ? "OVERLOADED" : actualTotal > 8 ? "BUSY" : "SAFE"
+          status: actualTotal >= 12 ? "OVERLOADED" : actualTotal >= 9 ? "BUSY" : "SAFE"
         };
       }
       return day;
@@ -850,8 +894,15 @@ async function runCapacityAnalysis(_fingerprint: string, tasks: NotionTask[], us
 
   const finalThinkContext = thinkContext || (report as any)?.thinkContext || "";
 
+  // Extract task name from ID-Name cache key for easier client-side lookup
+  const estimationsRecord: Record<string, number> = {};
+  taskEstimationCache.forEach((hours, key) => {
+    const namePart = key.split('-').slice(1).join('-');
+    estimationsRecord[namePart || key] = hours;
+  });
+
   return report
-    ? { ...report, thinkContext: finalThinkContext }
+    ? { ...report, thinkContext: finalThinkContext, knownEstimations: estimationsRecord }
     : { insights: [], overallSummary: "Could not generate report.", thinkContext: finalThinkContext };
 }
 
@@ -908,7 +959,7 @@ export async function generateHorizonRoadmap(goalPrompt: string): Promise<Horizo
         PLANNING RULES:
         1. STRATEGIC SEQUENCING: Look at the CURRENT WORKLOAD above before assigning tasks.
         2. SMART AVOIDANCE: If a date is "BUSY" or "OVERLOADED" in the list above, DO NOT schedule new tasks on that day. Skip it and find the next available day with < 6 hours of existing work.
-        3. HARD CAP: Ensure the NEW roadmap tasks + EXISTING workload never exceed 10 hours total for any single day.
+        3. HARD CAP: Ensure the NEW roadmap tasks + EXISTING workload never exceed 12 hours total for any single day.
         4. ROADMAP STRUCTURE: Generate 4 - 8 subtasks that logically complete the goal.
         
         OUTPUT strict JSON schema:
