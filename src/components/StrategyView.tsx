@@ -3,15 +3,12 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Sparkles, 
   Brain, 
-  Zap, 
   LayoutDashboard, 
   Loader2, 
-  TrendingUp, 
-  Check,
-  X
+  TrendingUp
 } from 'lucide-react';
 import { getCapacityInsights, CapacityReport, NotionTask } from "@/app/actions/agent-actions";
-import { updateNotionTask, fetchNotionTasks } from "@/app/actions/notion-actions";
+import { fetchNotionTasks } from "@/app/actions/notion-actions";
 
 interface StrategyViewProps {
   tasks: NotionTask[];
@@ -22,43 +19,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
   const [report, setReport] = useState<CapacityReport | null>(initialReport || null);
   const [loading, setLoading] = useState(!initialReport);
   const [thinkOpen, setThinkOpen] = useState(false);
-  const [mitigationState, setMitigationState] = useState<Record<string, 'idle' | 'loading' | 'accepted' | 'rejected'>>({});
   const fetchInsightsRef = React.useRef<() => void>(() => {});
-
-  const handleAccept = useCallback(async (insightDate: string, taskName: string, targetDate: string) => {
-    setMitigationState(prev => ({ ...prev, [insightDate]: 'loading' }));
-    try {
-      const allTasks = await fetchNotionTasks();
-      const matchedTask = allTasks.find(t =>
-        t.name.toLowerCase().trim() === taskName.toLowerCase().trim()
-      );
-      if (!matchedTask) {
-        console.error('Task not found:', taskName);
-        setMitigationState(prev => ({ ...prev, [insightDate]: 'idle' }));
-        return;
-      }
-      const result = await updateNotionTask(
-        matchedTask.id,
-        undefined,
-        targetDate,
-        matchedTask.propNames,
-        matchedTask.propTypes
-      );
-      if (result.success) {
-        setMitigationState(prev => ({ ...prev, [insightDate]: 'accepted' }));
-        // Bust the server-side Map cache by clearing the fingerprint
-        if (typeof window !== 'undefined') {
-          localStorage.removeItem('proactive_tasks_fingerprint');
-        }
-        setTimeout(() => fetchInsightsRef.current?.(), 1500);
-      } else {
-        setMitigationState(prev => ({ ...prev, [insightDate]: 'idle' }));
-      }
-    } catch (e) {
-      console.error('Accept mitigation error:', e);
-      setMitigationState(prev => ({ ...prev, [insightDate]: 'idle' }));
-    }
-  }, []);
 
   useEffect(() => {
     const fetchInsights = async () => {
@@ -117,7 +78,6 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
     };
 
     fetchInsightsRef.current = fetchInsights;
-    (window as any).__strategyHandleAccept = handleAccept;
 
     const handleSync = () => fetchInsights();
     window.addEventListener('notion-tasks-updated', handleSync);
@@ -190,7 +150,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
              <button
                type="button"
                onClick={() => setThinkOpen(!thinkOpen)}
-               className="flex items-center gap-2 text-[10px] font-black text-purple-300/60 hover:text-purple-300 transition-all uppercase tracking-[0.2em] cursor-pointer"
+               className="relative z-50 flex items-center gap-2 text-[10px] font-black text-purple-300/60 hover:text-purple-300 transition-all uppercase tracking-[0.2em] cursor-pointer"
              >
                <Brain size={12} className={thinkOpen ? "text-purple-400" : ""} />
                <span>{thinkOpen ? "Collapse Intelligence" : "Expand Intelligence"}</span>
@@ -218,127 +178,95 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
 
       {/* Grid: Individual date-based analytical cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-        {(report?.insights || []).map((insight, idx) => {
-          const isOverload = insight.status === "OVERLOADED";
-          const isBusy = insight.status === "BUSY";
-          const date = new Date(insight.date);
-          
-          return (
-            <div key={idx} className={`bg-white/70 backdrop-blur-xl rounded-[2.5rem] border border-slate-100 p-10 shadow-sm transition-all duration-500 hover:shadow-[0_40px_80px_-20px_rgba(0,0,0,0.08)] hover:-translate-y-2 relative overflow-hidden flex flex-col group ${isOverload ? 'border-b-rose-200' : 'border-b-slate-200/50'}`}>
-               {isOverload && <div className="absolute top-0 left-0 w-full h-2 bg-rose-500" />}
-               
-               <div className="flex items-center justify-between mb-8">
-                  <div className="flex flex-col">
-                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-[0.3em] mb-1 leading-none">{date.toLocaleDateString([], { weekday: 'long' })}</span>
-                    <span className="text-2xl font-black text-slate-900 tracking-tighter uppercase leading-none">
-                      {date.toLocaleDateString([], { month: 'short', day: 'numeric' })}
-                    </span>
-                  </div>
-                  <div className={`p-4 rounded-[1.5rem] transition-all duration-500 border shadow-sm ${isOverload 
-                     ? 'bg-rose-50 text-rose-600 border-rose-100 group-hover:bg-rose-600 group-hover:text-white' 
-                     : isBusy 
-                     ? 'bg-orange-50 text-orange-600 border-orange-100 group-hover:bg-orange-600 group-hover:text-white' 
-                     : 'bg-emerald-50 text-emerald-600 border-emerald-100 group-hover:bg-emerald-600 group-hover:text-white'}`}>
-                    <TrendingUp size={24} />
-                  </div>
-               </div>
+        {(() => {
+          // Generate a consistent 2-day window starting from Today
+          const now = new Date();
+          const timeline = Array.from({ length: 2 }, (_, i) => {
+            const d = new Date(now);
+            d.setDate(now.getDate() + i);
+            const dateStr = d.toISOString().split('T')[0];
+            
+            // Look for existing insight from the AI
+            const existing = report.insights.find(ins => ins.date === dateStr);
+            if (existing) return existing;
+            
+            // Otherwise, create a placeholder for the empty day
+            return {
+              date: dateStr,
+              totalHours: 0,
+              status: "SAFE" as const,
+              taskInsights: []
+            };
+          });
 
-               <div className="flex items-baseline gap-3 mb-8">
-                  <span className="text-5xl font-black text-slate-900 tracking-tighter leading-none">{(insight.totalHours || 0).toFixed(1)}</span>
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">Estimated Hours</span>
-               </div>
+          // Prepend any "OVERDUE" or "PAST DUE" items from the AI that aren't in our 7-day future window
+          const overdue = report.insights.filter(ins => {
+            const insDate = new Date(ins.date);
+            const todayDate = new Date(now.toISOString().split('T')[0]);
+            return insDate < todayDate || isNaN(insDate.getTime());
+          });
 
-               {/* Data: Breakdown of tasks for this specific date */}
-               <div className="space-y-4 mb-10 flex-1">
-                  <div className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] mb-4 flex items-center gap-2">
-                     <div className="w-1 h-3 bg-slate-200 rounded-full"></div>
-                     Allocation Metrics
-                  </div>
-                  {insight.taskInsights?.map((t, tidx) => (
-                    <div key={tidx} className="flex flex-col gap-1 border-l-2 border-slate-100 pl-5 py-1 group/item hover:border-blue-400 transition-colors">
-                       <span className="text-sm font-bold text-slate-800 line-clamp-1 group-hover/item:text-blue-600 transition-colors tracking-tight leading-tight">{t.name}</span>
-                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mt-1">Estimated time: {t.estimatedHours}h</span>
+          const finalDisplayList = [...overdue, ...timeline];
+
+          return finalDisplayList.map((insight, idx) => {
+            const isOverload = insight.status === "OVERLOADED";
+            const isBusy = insight.status === "BUSY";
+            const date = new Date(insight.date);
+            const isInvalid = isNaN(date.getTime());
+            // Safe date string comparison for "Today"
+            const todayStr = new Date().toISOString().split('T')[0];
+            const isToday = !isInvalid && date.toISOString().split('T')[0] === todayStr;
+
+            return (
+              <div key={idx} className={`bg-white/70 backdrop-blur-xl rounded-[2.5rem] border border-slate-100 p-10 shadow-sm transition-all duration-500 relative overflow-hidden flex flex-col group hover:shadow-[0_45px_70px_-25px_rgba(0,0,0,0.12)] hover:-translate-y-4 ${isOverload ? 'border-b-rose-200' : 'border-b-slate-200/50'}`}>
+                 {isOverload && <div className="absolute top-0 left-0 w-full h-2 bg-rose-500" />}
+                 
+                 <div className="flex items-center justify-between mb-8">
+                    <div className="flex flex-col">
+                      <span className={`text-[10px] font-black uppercase tracking-[0.3em] mb-1 leading-none ${isToday ? 'text-purple-600' : 'text-slate-400'}`}>
+                        {isToday ? "TODAY" : isInvalid ? "OVERDUE" : date.toLocaleDateString([], { weekday: 'long' })}
+                      </span>
+                      <span className="text-2xl font-black text-slate-900 tracking-tighter uppercase leading-none">
+                        {isInvalid ? "Past Due" : date.toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                      </span>
                     </div>
-                  ))}
-                  {(!insight.taskInsights || insight.taskInsights.length === 0) && (
-                     <div className="text-[11px] font-bold text-slate-400 uppercase tracking-widest py-4 bg-slate-50/50 rounded-2xl text-center border border-dashed border-slate-100 opacity-60">
-                        Zero Allocations
-                     </div>
-                  )}
-               </div>
-
-               {/* Strategy Recommendation with Accept / Reject */}
-               {insight.suggestion && (
-                 <div className={`mt-auto p-7 min-h-[140px] rounded-[1.8rem] border shadow-sm relative overflow-hidden group/sugg transition-all duration-500 
-                    hover:shadow-xl hover:-translate-y-1 ${
-                    isOverload 
-                    ? 'bg-rose-50 border-rose-100 group-hover:bg-rose-100/80' 
-                    : 'bg-indigo-50 border-indigo-100 group-hover:bg-indigo-100/80'}`}>
-                    
-                    <div className="flex flex-col gap-5 relative z-10 h-full">
-                       <div className="flex items-start gap-3.5">
-                          <div className={`p-2 rounded-xl transition-colors ${isOverload ? 'bg-rose-200/50 text-rose-600' : 'bg-indigo-200/50 text-indigo-600'}`}>
-                            <Zap size={14} className="fill-current" />
-                          </div>
-                          <div className="flex flex-col gap-1.5 flex-1">
-                             <span className={`text-[10px] font-black uppercase tracking-[0.25em] ${isOverload ? 'text-rose-400' : 'text-indigo-400'}`}>Agent Mitigator</span>
-                             
-                             {mitigationState[insight.date] === 'accepted' ? (
-                               <p className="text-xs font-black text-emerald-700 flex items-center gap-1.5 animate-in slide-in-from-left-2">
-                                 <Check size={14} className="text-emerald-600" /> Task moved successfully!
-                               </p>
-                             ) : mitigationState[insight.date] === 'rejected' ? (
-                               <p className="text-xs font-bold text-slate-400 line-through italic animate-in fade-in">Suggestion dismissed</p>
-                             ) : (
-                               <p className={`text-[13px] font-bold leading-relaxed tracking-tight ${isOverload ? 'text-rose-900' : 'text-indigo-900'}`}>
-                                 {insight.suggestion}
-                               </p>
-                             )}
-                          </div>
-                       </div>
-
-                       {/* Action Bar — Improved Visibility */}
-                       {insight.mitigationTaskName && insight.mitigationTargetDate &&
-                        mitigationState[insight.date] !== 'accepted' &&
-                        mitigationState[insight.date] !== 'rejected' && (
-                         <div className="flex items-center gap-3 pt-1 mt-auto">
-                           <button
-                             onClick={() => (window as any).__strategyHandleAccept?.(insight.date, insight.mitigationTaskName!, insight.mitigationTargetDate!)}
-                             disabled={mitigationState[insight.date] === 'loading'}
-                             className={`flex-1 flex items-center justify-center gap-2 px-5 py-3 rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all duration-300 shadow-lg active:scale-95
-                               ${ isOverload
-                                 ? 'bg-rose-600 hover:bg-rose-700 text-white disabled:bg-rose-300 hover:shadow-rose-300/50'
-                                 : 'bg-indigo-600 hover:bg-indigo-700 text-white disabled:bg-indigo-300 hover:shadow-indigo-300/50'
-                               }`}
-                           >
-                             {mitigationState[insight.date] === 'loading' ? (
-                               <>
-                                 <Loader2 size={12} className="animate-spin" />
-                                 <span>Moving...</span>
-                               </>
-                             ) : (
-                               <>
-                                 <Check size={12} />
-                                 <span>Accept</span>
-                               </>
-                             )}
-                           </button>
-                           <button
-                             onClick={() => setMitigationState(prev => ({ ...prev, [insight.date]: 'rejected' }))}
-                             disabled={mitigationState[insight.date] === 'loading'}
-                             className="px-5 py-3 rounded-2xl text-[11px] font-black uppercase tracking-widest bg-white hover:bg-slate-100 text-slate-500 transition-all duration-300 border border-slate-100 hover:border-slate-200"
-                           >
-                             <X size={12} />
-                           </button>
-                         </div>
-                       )}
+                    <div className={`p-4 rounded-[1.5rem] transition-all duration-500 border shadow-sm ${isOverload 
+                       ? 'bg-rose-50 text-rose-600 border-rose-100 group-hover:bg-rose-600 group-hover:text-white' 
+                       : isBusy 
+                       ? 'bg-orange-50 text-orange-600 border-orange-100 group-hover:bg-orange-600 group-hover:text-white' 
+                       : 'bg-emerald-50 text-emerald-600 border-emerald-100 group-hover:bg-emerald-600 group-hover:text-white'}`}>
+                      <TrendingUp size={24} />
                     </div>
-                    <Brain size={120} className={`absolute -bottom-10 -right-10 opacity-[0.04] pointer-events-none group-hover/sugg:scale-125 transition-transform duration-700 ${isOverload ? 'text-rose-900' : 'text-indigo-900'}`} />
                  </div>
-               )}
-            </div>
-          );
-        })}
+
+                 <div className="flex items-baseline gap-3 mb-8">
+                    <span className="text-5xl font-black text-slate-900 tracking-tighter leading-none">{(insight.totalHours || 0).toFixed(1)}</span>
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">Estimated Hours</span>
+                 </div>
+
+                 {/* Data: Breakdown of tasks for this specific date */}
+                 <div className="space-y-4 mb-10 flex-1">
+                    <div className="text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] mb-4 flex items-center gap-2">
+                       <div className="w-1 h-3 bg-slate-200 rounded-full"></div>
+                       Allocation Metrics
+                    </div>
+                    {insight.taskInsights?.map((t, tidx) => (
+                      <div key={tidx} className="flex flex-col gap-1 border-l-2 border-slate-100 pl-5 py-1 group/item hover:border-blue-400 transition-colors">
+                         <span className="text-sm font-bold text-slate-800 line-clamp-1 group-hover/item:text-blue-600 transition-colors tracking-tight leading-tight">{t.name}</span>
+                         <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mt-1">Estimated time: {t.estimatedHours}h</span>
+                      </div>
+                    ))}
+                    {(!insight.taskInsights || insight.taskInsights.length === 0) && (
+                       <div className="text-[11px] font-bold text-slate-400 uppercase tracking-widest py-4 bg-slate-50/50 rounded-2xl text-center border border-dashed border-slate-100 opacity-60">
+                          Zero Allocations
+                       </div>
+                    )}
+                 </div>
+
+              </div>
+            );
+          });
+        })()}
       </div>
     </div>
   );

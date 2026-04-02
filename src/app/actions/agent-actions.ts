@@ -87,6 +87,11 @@ function extractJSON<T>(raw: string): T | null {
       }
     }
 
+    // Scrub: Remove LLM hallucinations of the prompt placeholder template.
+    if (clean.includes("[Task Name]") || clean.includes("[Target Date]")) {
+      return null;
+    }
+
     return null;
   } catch (e) {
     console.error("Agent JSON Parsing Failed:", String(e));
@@ -633,7 +638,10 @@ export async function getCapacityInsights(
   userOffset: string,
   persistentMemory?: Record<string, number>
 ): Promise<CapacityReport> {
-  const today = new Date().toISOString().split("T")[0];
+  const [sign, h, m] = userOffset.match(/([+-])(\d{2}):(\d{2})/)?.slice(1) || ["+", "0", "0"];
+  const offsetMs = (parseInt(h) * 60 + parseInt(m)) * 60000 * (sign === "+" ? 1 : -1);
+  const localNow = new Date(new Date().getTime() + offsetMs);
+  const today = localNow.toISOString().split("T")[0];
 
   if (Date.now() < rateLimitCooldownUntil) {
     const remainingSeconds = Math.ceil((rateLimitCooldownUntil - Date.now()) / 1000);
@@ -659,7 +667,9 @@ export async function getCapacityInsights(
   }
 
   // State: Create a data fingerprint to detect changes across dates/status/names.
-  const taskFingerprint = `v6|${today}|` + [...tasks]
+  // We include hour:minute so the cache busts as the day runs out.
+  const timeKey = `${localNow.getHours()}-${Math.floor(localNow.getMinutes() / 15)}`;
+  const taskFingerprint = `v7|${today}|${timeKey}|` + [...tasks]
     .sort((a, b) => a.id.localeCompare(b.id))
     .map(t => {
       const cachedTime = taskEstimationCache.get(`${t.id}-${t.name}`);
@@ -705,12 +715,22 @@ async function runCapacityAnalysis(_fingerprint: string, tasks: NotionTask[], us
   const localNow = new Date(new Date().getTime() + offsetMs);
   const today = localNow.toISOString().split("T")[0];
 
+  // Temporal Awareness: Calculate remaining hours in the current day
+  const endOfDay = new Date(localNow);
+  endOfDay.setHours(23, 59, 59, 999);
+  const remainingHoursInDay = Math.max(0, (endOfDay.getTime() - localNow.getTime()) / 3600000).toFixed(2);
+
   const taskContext = tasks
     .filter(t => t.status?.toLowerCase() !== "done")
     .map(t => {
       const cached = taskEstimationCache.get(`${t.id}-${t.name}`);
       const memTag = cached ? ` [Estimation Memory: ${cached.toFixed(1)}h]` : "";
-      return `- Name: "${t.name}", Status: "${t.status}", Deadline: "${t.deadline}"${memTag}`;
+
+      // Overdue Labeling: Help the AI identify tasks past their deadline
+      const isOverdue = t.deadline && t.deadline !== "No Deadline" && t.deadline < today;
+      const overdueTag = isOverdue ? " (OVERDUE)" : "";
+
+      return `- Name: "${t.name}", Status: "${t.status}", Deadline: "${t.deadline}"${overdueTag}${memTag}`;
     })
     .join("\n");
 
@@ -730,13 +750,17 @@ async function runCapacityAnalysis(_fingerprint: string, tasks: NotionTask[], us
             Analyze the task list and provide a Strategic Intelligence Report.
 
             RULES:
-            1. Group tasks by date.
-            2. ESTIMATION MEMORY: Every task list entry may have [Estimation Memory: X.Xh]. If you see this, you MUST use that exact number. DO NOT re-calculate it. If no memory exists, estimate a reasonable duration based on the task name (default to 1-4 hours).
-            3. MITIGATION: For BUSY or OVERLOADED days (>8h), suggest moving one specific task to a nearby date to balance the load. (If no dates are entirely SAFE, pick the least busy nearby date, or push to next week).
-            4. Suggestion MUST follow this format: "Move [Task Name] to [Target Date] to reduce load."
-            5. mitigationTaskName MUST be the exact name of the task to move.
-            6. mitigationTargetDate MUST be the YYYY-MM-DD date to move it to.
-            
+            1. GROUPING: Every unique deadline in the task list MUST have an entry in "insights". 
+            2. OVERDUE: Tasks before ${today} MUST stay grouped under their original date.
+            3. ESTIMATION MEMORY: [Task Name] [Estimation Memory: X.Xh]. If you see this, you MUST use that exact number.
+            4. THRESHOLDS: SAFE < 9.0, BUSY 9.0 - 11.9, OVERLOADED >= 12.0.
+            5. STRATEGIC SUGGESTION: Write mitigations in natural, human-level English. (Example: "I've flagged tomorrow's 14-hour overload. Let's pull the Grammar Edits forward into today's empty slot to give you breathing room for the core thesis work."). NO TEMPLATES. NO BRACKETS.
+            6. DISPLACEMENT: mitigationTargetDate MUST be DIFFERENT from the overloaded date.
+            7. URGENT PRIORITY: Protect Today and Tomorrow. Move the LEAST URGENT task (furthest deadline) first.
+            8. DEADLINE PRESERVATION: Only move a task AFTER its deadline as an absolute last resort. Prefer pulling work earlier.
+            9. mitigationTaskName MUST be exact Task Name.
+            10. mitigationTargetDate MUST be YYYY-MM-DD.
+
             OUTPUT strict JSON:
             {
               "insights": [
@@ -798,8 +822,25 @@ async function runCapacityAnalysis(_fingerprint: string, tasks: NotionTask[], us
       return day;
     });
 
-    // UI Consistency: programmatically fix any numeric hallucinations in the AI text.
-    const overloads = report.insights.filter(i => i.totalHours > 8);
+    // Server-Side Guard: Override invalid AI dates (Past dates OR same-day moves)
+    report.insights.forEach(day => {
+      const isSameDayMove = day.mitigationTargetDate === day.date;
+      const isPastMove = day.mitigationTargetDate && day.mitigationTargetDate < today;
+
+      if (day.mitigationTargetDate && (isSameDayMove || isPastMove)) {
+        // High-Trust Fallback: Target "Today" (localNow) first to balance near-term gaps.
+        const fallbackStr = today;
+
+        // Redirect to safe target
+        day.mitigationTargetDate = fallbackStr;
+
+        // Final Fix: Sync the text to match our corrected date
+        if (day.suggestion) {
+          day.suggestion = day.suggestion.replace(/\d{4}-\d{2}-\d{2}/g, fallbackStr);
+        }
+      }
+    });
+    const overloads = report.insights.filter(i => i.totalHours > 10);
     if (overloads.length > 0) {
       const topOverload = Math.max(...overloads.map(o => o.totalHours)).toFixed(1);
       const numberRegex = new RegExp(`(\\d+\\.\\d+|\\d+)(?=\\s*h|\\s*hours?)`, 'gi');

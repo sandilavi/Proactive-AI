@@ -67,6 +67,8 @@ export default function DashboardHeader() {
   const [unreadCapacityCount, setUnreadCapacityCount] = useState(0);
   const [hasOverload, setHasOverload] = useState(false);
   const [mitigationStates, setMitigationStates] = useState<Record<string, 'idle' | 'loading' | 'done' | 'rejected'>>({});
+  // Shield to hide recently resolved tasks during Notion API propagation delay (45s)
+  const [resolutionShield, setResolutionShield] = useState<Record<string, number>>({});
 
   const handleAcceptMitigation = useCallback(async (alertId: string, taskName: string, targetDate: string) => {
     setMitigationStates(prev => ({ ...prev, [alertId]: 'loading' }));
@@ -80,6 +82,33 @@ export default function DashboardHeader() {
       const result = await updateNotionTask(matched.id, undefined, targetDate, matched.propNames, matched.propTypes);
       if (result.success) {
         setMitigationStates(prev => ({ ...prev, [alertId]: 'done' }));
+        
+        // Shield this move for 45s to bridge Notion's slow API propagation
+        const shieldKey = `${taskName.toLowerCase().trim()}-${targetDate}`;
+        setResolutionShield(prev => ({ ...prev, [shieldKey]: Date.now() + 45000 }));
+
+        // Vanish the alert from BOTH Hubs after feedback time
+        setTimeout(() => {
+          // Vanish from Capacity Data Hub (Brain)
+          setCapacityData(prev => prev ? {
+            ...prev,
+            alerts: prev.alerts.filter((a: any) => a.id !== alertId)
+          } : null);
+
+          // Vanish from Toast List Hub (Bell)
+          setActiveToasts(prev => {
+            const next = prev.filter(t => t.id !== alertId);
+            localStorage.setItem("proactive_active_toasts", JSON.stringify(next));
+            return next;
+          });
+
+          // NEW: Clear the mitigation state so future alerts for the same ID/date can be interacted with again
+          setMitigationStates(prev => {
+            const next = { ...prev };
+            delete next[alertId];
+            return next;
+          });
+        }, 1500);
         // Bust local storage fingerprint to force refresh
         localStorage.removeItem("proactive_tasks_fingerprint");
         // Trigger global refresh events
@@ -242,24 +271,19 @@ export default function DashboardHeader() {
           </button>
 
           {capacityHubOpen && (
-            <div className="absolute top-16 right-0 w-[440px] bg-white border border-slate-100 shadow-[0_45px_100px_-20px_rgba(0,0,0,0.18)] rounded-[2.5rem] overflow-hidden animate-in slide-in-from-top-4 fade-in duration-500 z-50">
+            <div className="absolute top-16 right-0 w-[440px] max-h-[calc(100vh-120px)] bg-white border border-slate-100 shadow-[0_45px_100px_-20px_rgba(0,0,0,0.18)] rounded-[2.5rem] overflow-hidden animate-in slide-in-from-top-4 fade-in duration-500 z-50 flex flex-col">
                <div className="p-8 bg-indigo-950 text-white relative overflow-hidden">
                   <div className="absolute top-0 right-0 p-10 opacity-[0.05] pointer-events-none">
                     <Brain size={180} />
                   </div>
                   <div className="relative z-10">
-                    <div className="flex items-center gap-2.5 mb-6">
-                      <div className="bg-white/10 backdrop-blur-xl px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-[0.2em] border border-white/10 shadow-2xl">
-                        Neural Capacity Hub
-                      </div>
+                    <div className="bg-white/10 backdrop-blur-md px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-[0.2em] border border-white/10 shadow-2xl inline-block">
+                      Neural Capacity Hub
                     </div>
-                    <h3 className="text-2xl font-black tracking-tighter leading-tight mb-3">
-                      {capacityData?.summary || "Neural core is currently idle."}
-                    </h3>
                   </div>
                </div>
 
-               <div className="p-6 pb-12 space-y-4 max-h-[65vh] overflow-y-auto bg-slate-50/30 scrollbar-hide">
+               <div className="flex-1 overflow-y-auto p-6 pb-10 space-y-4 bg-slate-50/30 scrollbar-hide">
                   {(!capacityData || capacityData.alerts.length === 0) ? (
                     <div className="py-12 flex flex-col items-center justify-center text-center">
                        <Target className="text-slate-200 mb-4" size={48} />
@@ -267,16 +291,26 @@ export default function DashboardHeader() {
                     </div>
                   ) : (
                     capacityData.alerts
-                      .filter((alert: any) => (alert.totalHours || 0) > 0 && alert.date) // Hide empty/broken entries
-                      .map((alert: any, idx: number) => {
+                      .filter((alert: any) => (alert.totalHours || 0) > 0 && alert.date && alert.suggestion) // Hide empty/broken entries & those with no actionable suggestion
+                      .filter((alert: any) => {
+                        // Shield Filter: Hide if we just recently moved this task for this specific overload date
+                        if (!alert.mitigationTaskName || !alert.mitigationTargetDate) return true;
+                        const shieldKey = `${alert.mitigationTaskName.toLowerCase().trim()}-${alert.mitigationTargetDate}`;
+                        const expiry = resolutionShield[shieldKey];
+                        return !expiry || Date.now() > expiry;
+                      })
+                      .map((alert: any) => {
                         const isOverload = alert.status === "OVERLOADED";
                         const dateObj = new Date(alert.date);
                         const displayDate = isNaN(dateObj.getTime()) 
                           ? "Upcoming Period" 
                           : dateObj.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
 
+                        // Using date as a stable ID for capacity insights
+                        const alertId = alert.date;
+
                         return (
-                          <div key={idx} className={`p-6 bg-white rounded-[1.75rem] border border-slate-100 shadow-sm transition-all duration-500 hover:shadow-md ${isOverload ? 'border-l-rose-500 border-l-[6px]' : 'border-l-orange-500 border-l-[6px]'}`}>
+                          <div key={alertId} className={`p-6 bg-white rounded-[1.75rem] border border-slate-100 shadow-sm transition-all duration-500 hover:shadow-md ${isOverload ? 'border-l-rose-500 border-l-[6px]' : 'border-l-orange-500 border-l-[6px]'}`}>
                              <div className="flex items-center justify-between mb-4">
                                 <span className="text-xs font-black text-slate-800 tracking-tight">
                                   {displayDate}
@@ -296,11 +330,11 @@ export default function DashboardHeader() {
                                       <div className="flex flex-col gap-1">
                                          <span className={`text-[9px] font-black uppercase tracking-[0.2em] ${isOverload ? 'text-rose-400' : 'text-indigo-400'}`}>Agent Mitigator</span>
                                          
-                                         {mitigationStates[alert.id] === 'done' ? (
+                                         {mitigationStates[alertId] === 'done' ? (
                                            <div className="text-[11px] font-black text-emerald-700 flex items-center gap-1.5 animate-in slide-in-from-left-2">
                                               <Check size={14} /> Task rescheduled!
                                            </div>
-                                         ) : mitigationStates[alert.id] === 'rejected' ? (
+                                         ) : mitigationStates[alertId] === 'rejected' ? (
                                            <p className="text-[11px] font-bold text-slate-400 line-through italic">Dismissed</p>
                                          ) : (
                                            <p className={`text-[12px] font-black leading-relaxed tracking-tight ${isOverload ? 'text-rose-900' : 'text-indigo-900'}`}>
@@ -310,37 +344,51 @@ export default function DashboardHeader() {
                                       </div>
                                    </div>
 
-                                   {/* ACTION BUTTONS DIRECTLY IN HUB */}
-                                   {!mitigationStates[alert.id] && alert.mitigationTaskName && alert.mitigationTargetDate && (
-                                     <div className="flex gap-2">
-                                       <button 
-                                         onClick={(e) => {
-                                           e.stopPropagation();
-                                           handleAcceptMitigation(alert.id, alert.mitigationTaskName!, alert.mitigationTargetDate!);
-                                         }}
-                                         disabled={mitigationStates[alert.id] === 'loading'}
-                                         className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all
-                                           ${isOverload 
-                                             ? 'bg-rose-600 hover:bg-rose-700 text-white disabled:bg-rose-300 shadow-lg shadow-rose-200/50' 
-                                             : 'bg-indigo-600 hover:bg-indigo-700 text-white disabled:bg-indigo-300 shadow-lg shadow-indigo-200/50'}`}
-                                       >
-                                         {mitigationStates[alert.id] === 'loading' ? (
-                                           <Loader2 size={12} className="animate-spin" />
-                                         ) : (
-                                           <Check size={12} />
-                                         )}
-                                         {mitigationStates[alert.id] === 'loading' ? 'Moving...' : 'Accept'}
-                                       </button>
-                                       <button 
-                                         onClick={(e) => {
-                                           e.stopPropagation();
-                                           setMitigationStates(prev => ({ ...prev, [alert.id]: 'rejected' }));
-                                         }}
-                                         className="px-4 py-2.5 rounded-xl text-[10px] font-black uppercase bg-white/50 border border-black/5 hover:bg-white text-slate-400"
-                                       >
-                                         <X size={12} />
-                                       </button>
-                                     </div>
+                                   {mitigationStates[alertId] !== 'done' && mitigationStates[alertId] !== 'rejected' && alert.mitigationTaskName && alert.mitigationTargetDate && (
+                                      <div className="flex gap-2">
+                                        <button 
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleAcceptMitigation(alertId, alert.mitigationTaskName!, alert.mitigationTargetDate!);
+                                          }}
+                                          disabled={mitigationStates[alertId] === 'loading'}
+                                          className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer active:scale-95
+                                            ${isOverload 
+                                              ? 'bg-rose-600 hover:bg-rose-700 text-white disabled:bg-rose-300 shadow-lg shadow-rose-200/50' 
+                                              : 'bg-indigo-600 hover:bg-indigo-700 text-white disabled:bg-indigo-300 shadow-lg shadow-indigo-200/50'}`}
+                                        >
+                                          {mitigationStates[alertId] === 'loading' ? (
+                                            <Loader2 size={12} className="animate-spin" />
+                                          ) : (
+                                            <Check size={12} />
+                                          )}
+                                          {mitigationStates[alertId] === 'loading' ? 'Moving...' : 'Accept'}
+                                        </button>
+                                        <button 
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setMitigationStates(prev => ({ ...prev, [alertId]: 'rejected' }));
+                                            // Vanish after 1.5s
+                                            setTimeout(() => {
+                                               setCapacityData(prev => prev ? {
+                                                 ...prev,
+                                                 alerts: prev.alerts.filter((a: any) => a.date !== alert.date)
+                                               } : null);
+                                               
+                                               // Clear mitigation state for this ID
+                                               setMitigationStates(prev => {
+                                                 const next = { ...prev };
+                                                 delete next[alertId];
+                                                 return next;
+                                               });
+                                            }, 1500);
+                                          }}
+                                          className="px-4 py-2.5 rounded-xl text-[10px] font-black uppercase bg-white/50 border border-black/5 hover:bg-white text-slate-400 cursor-pointer active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed"
+                                     disabled={mitigationStates[alertId] === 'loading'}
+                                        >
+                                          <X size={12} />
+                                        </button>
+                                      </div>
                                    )}
                                 </div>
                                 <Brain size={120} className={`absolute -bottom-12 -right-12 opacity-[0.03] pointer-events-none group-hover/sugg:scale-110 transition-transform ${isOverload ? 'text-rose-900' : 'text-indigo-900'}`} />
@@ -352,14 +400,6 @@ export default function DashboardHeader() {
                   )}
                </div>
 
-               <div className="p-6 border-t border-slate-100 flex justify-center">
-                  <button 
-                    onClick={() => setCapacityHubOpen(false)}
-                    className="text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-indigo-600 transition-colors"
-                  >
-                    Minimize Intelligence Hub
-                  </button>
-               </div>
             </div>
           )}
         </div>
@@ -393,7 +433,7 @@ export default function DashboardHeader() {
         </button>
 
         {showNotificationPanel && (
-          <div className="absolute top-16 right-0 w-[420px] bg-white border border-slate-100 shadow-[0_45px_100px_-20px_rgba(0,0,0,0.18)] rounded-[2rem] overflow-hidden animate-in slide-in-from-top-4 fade-in duration-500 z-50">
+          <div className="absolute top-16 right-0 w-[420px] max-h-[calc(100vh-120px)] bg-white border border-slate-100 shadow-[0_45px_100px_-20px_rgba(0,0,0,0.18)] rounded-[2rem] overflow-hidden animate-in slide-in-from-top-4 fade-in duration-500 z-50 flex flex-col">
             <div className="px-6 py-5 border-b border-slate-50 flex items-center justify-between bg-slate-50/30">
               <div className="flex items-center gap-3">
                  <div className="w-6 h-[2px] bg-slate-300 rounded-full"></div>
@@ -407,14 +447,22 @@ export default function DashboardHeader() {
               </button>
             </div>
 
-            <div className="max-h-[75vh] overflow-y-auto p-4 pb-10 space-y-3 bg-[#fdfdfe]/50 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
+            <div className="flex-1 overflow-y-auto p-4 pb-10 space-y-3 bg-[#fdfdfe]/50 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
               {activeToasts.length === 0 ? (
                 <div className="py-12 flex flex-col items-center justify-center text-center opacity-40">
                   <Brain className="text-slate-300 mb-3" size={32} />
                   <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.25em] leading-relaxed">Neural Core Stable.<br/>No pending alerts.</p>
                 </div>
               ) : (
-                activeToasts.map(toast => {
+                activeToasts
+                  .filter((toast: any) => {
+                    // Shield Filter: Hide if we just recently moved this task
+                    if (!toast.mitigationTaskName || !toast.mitigationTargetDate) return true;
+                    const shieldKey = `${toast.mitigationTaskName.toLowerCase().trim()}-${toast.mitigationTargetDate}`;
+                    const expiry = resolutionShield[shieldKey];
+                    return !expiry || Date.now() > expiry;
+                  })
+                  .map(toast => {
                   const s = urgencyStyles[toast.urgency];
                   const isNew = (toast.alertedAt || 0) > lastReadTimestamp;
                   
@@ -466,7 +514,7 @@ export default function DashboardHeader() {
                                   </p>
 
                                   {/* ACTION BUTTONS DIRECTLY IN NOTIFICATION PANEL */}
-                                  {toast.mitigationTaskName && toast.mitigationTargetDate && (
+                                  {mitigationStates[toast.id] !== 'done' && mitigationStates[toast.id] !== 'rejected' && toast.mitigationTaskName && toast.mitigationTargetDate && (
                                     <div className="flex gap-2">
                                       <button 
                                         onClick={(e) => {
@@ -476,8 +524,8 @@ export default function DashboardHeader() {
                                         disabled={mitigationStates[toast.id] === 'loading'}
                                         className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all
                                           ${toast.urgency === 'CAPACITY_OVERLOADED' 
-                                            ? 'bg-rose-500 hover:bg-rose-600 text-white' 
-                                            : 'bg-indigo-500 hover:bg-indigo-600 text-white'}`}
+                                            ? 'bg-rose-500 hover:bg-rose-600 text-white cursor-pointer' 
+                                            : 'bg-indigo-500 hover:bg-indigo-600 text-white cursor-pointer'}`}
                                       >
                                         {mitigationStates[toast.id] === 'loading' ? (
                                           <Loader2 size={12} className="animate-spin" />
@@ -490,8 +538,17 @@ export default function DashboardHeader() {
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setMitigationStates(prev => ({ ...prev, [toast.id]: 'rejected' }));
+                                          // Vanish after 1.5s
+                                          setTimeout(() => {
+                                             setActiveToasts(prev => {
+                                               const next = prev.filter(t => t.id !== toast.id);
+                                               localStorage.setItem("proactive_active_toasts", JSON.stringify(next));
+                                               return next;
+                                             });
+                                          }, 1500);
                                         }}
-                                        className="px-4 py-2.5 rounded-xl text-[10px] font-black uppercase bg-slate-100 hover:bg-slate-200 text-slate-400"
+                                        className="px-4 py-2.5 rounded-xl text-[10px] font-black uppercase bg-slate-100 hover:bg-slate-200 text-slate-400 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                                         disabled={mitigationStates[toast.id] === 'loading'}
                                       >
                                         Reject
                                       </button>
@@ -512,7 +569,7 @@ export default function DashboardHeader() {
                     </div>
                   );
                 })
-              )}
+               )}
             </div>
           </div>
         )}
