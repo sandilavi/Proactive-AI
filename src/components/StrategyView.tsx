@@ -17,8 +17,31 @@ interface StrategyViewProps {
 
 export default function StrategyView({ tasks, initialReport }: StrategyViewProps) {
   const [report, setReport] = useState<CapacityReport | null>(initialReport || null);
-  const [loading, setLoading] = useState(!initialReport);
+  const [loading, setLoading] = useState(!report);
   const [thinkOpen, setThinkOpen] = useState(false);
+
+  // SAFE CLIENT HYDRATION: Fixes the 'Hydration failed' error by ensuring 
+  // the first render matches the server's HTML, then instantly switching to local memory.
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const isInitialError = report?.overallSummary?.includes("Rate Limit") || report?.overallSummary?.includes("API Error");
+      const hasNoInsights = !report?.insights || report?.insights?.length === 0;
+
+      if (isInitialError || hasNoInsights) {
+        try {
+          const saved = localStorage.getItem("proactive_capacity_full_report");
+          if (saved) {
+            const localSaved = JSON.parse(saved);
+            if (localSaved.insights && localSaved.insights.length > 0) {
+              setReport(localSaved);
+              setLoading(false);
+            }
+          }
+        } catch (e) {}
+      }
+    }
+  }, []); // Run once on mount 
+
   const fetchInsightsRef = React.useRef<() => void>(() => {});
 
   useEffect(() => {
@@ -59,9 +82,18 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
         
         const data = await getCapacityInsights(freshTasks, userOffset, savedEstimates);
         
-        // Update fingerprints after successful call
-        localStorage.setItem("proactive_capacity_fingerprint_strategy", currentFingerprint);
-        localStorage.setItem("proactive_capacity_last_day_strategy", todayStr);
+        // Update fingerprints ONLY after a successful (non-cooldown) call
+        const isRateLimitResponse = data?.overallSummary?.includes("Rate Limit");
+        if (!isRateLimitResponse && data && Array.isArray(data.insights)) {
+          localStorage.setItem("proactive_capacity_fingerprint_strategy", currentFingerprint);
+          localStorage.setItem("proactive_capacity_last_day_strategy", todayStr);
+          localStorage.setItem("proactive_capacity_full_report", JSON.stringify(data));
+        } else if (isRateLimitResponse) {
+          // CRITICAL: Clear fingerprints so the retry timer's stale closure
+          // cannot match them and skip the AI call
+          localStorage.removeItem("proactive_capacity_fingerprint_strategy");
+          localStorage.removeItem("proactive_capacity_last_day_strategy");
+        }
         
         setReport(data);
 
@@ -122,18 +154,18 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
   }, [tasks, initialReport]);
 
   // AUTO-RETRY: Detect rate limits and self-heal automatically
+  const isCooldown = report?.overallSummary?.includes("Rate Limit");
   useEffect(() => {
-    if (report?.overallSummary?.includes("Rate Limit hit")) {
-      const match = report.overallSummary.match(/wait (\d+)s/);
-      if (match) {
-        const seconds = parseInt(match[1]);
-        const timeout = setTimeout(() => {
-          fetchInsightsRef.current();
-        }, seconds * 1000 + 500); // Wait the stated time + 0.5s buffer
-        return () => clearTimeout(timeout);
-      }
+    if (isCooldown) {
+      // Supports both "wait 13s" and "for 15 seconds"
+      const match = report?.overallSummary?.match(/(?:wait |for )(\d+)(?:s| seconds)/);
+      const seconds = match ? parseInt(match[1]) : 15; // default to 15 if parsing fails
+      const timeout = setTimeout(() => {
+        fetchInsightsRef.current();
+      }, seconds * 1000 + 500); // Wait the stated time + 0.5s buffer
+      return () => clearTimeout(timeout);
     }
-  }, [report?.overallSummary]);
+  }, [report?.overallSummary]); // React now sees changing timestamps and re-triggers correctly
 
   if (loading) {
     return (

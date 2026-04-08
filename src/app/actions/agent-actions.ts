@@ -682,8 +682,8 @@ export async function getCapacityInsights(
   }
 
   // State: Create a data fingerprint to detect changes across dates/status/names.
-  // We include hour:minute so the cache busts as the day runs out.
-  const timeKey = `${localNow.getHours()}-${Math.floor(localNow.getMinutes() / 15)}`;
+  // We include hour so the cache stays fresh but doesn't burn too many tokens.
+  const timeKey = `${localNow.getHours()}`;
   const taskFingerprint = `v7|${today}|${timeKey}|` + [...tasks]
     .sort((a, b) => a.id.localeCompare(b.id))
     .map(t => {
@@ -759,6 +759,16 @@ async function runCapacityAnalysis(_fingerprint: string, tasks: NotionTask[], us
     })
     .join("\n");
 
+  // 3. Provide a Calendar Map so the AI knows which days are truly empty
+  const calendarMap = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(localNow);
+    d.setDate(d.getDate() + i);
+    calendarMap.push(d.toISOString().split('T')[0]);
+  }
+  const calendarContext = `AVAILABLE DATES (Next 7 Days):\n${calendarMap.join(", ")}`;
+
+
   if (!taskContext) {
     return { insights: [], overallSummary: "Your schedule is clear!" };
   }
@@ -767,46 +777,46 @@ async function runCapacityAnalysis(_fingerprint: string, tasks: NotionTask[], us
     const response = await groq.chat.completions.create({
       model: GROQ_MODEL,
       temperature: 0,
-      max_tokens: 4096,
+      max_tokens: 4000,
       messages: [
         {
           role: "system",
           content: `You are a Capacity Planning Agent. Today is ${today}. 
-            Analyze the task list and provide a Strategic Intelligence Report.
-            IMPORTANT: Keep your reasoning VERY brief. Output the JSON immediately.
+            Output a Strategic Intelligence Report in strict JSON.
+            
+            CORE CONSTRAINTS:
+            - DATA FIDELITY: Group tasks strictly by current deadline. DO NOT move tasks between dates in the JSON.
+            - ESTIMATION: Use [Estimation Memory: X.Xh] if present. Else, estimate 0.5-8h. Never 0.0h.
+            - THRESHOLDS: SAFE (<9h), BUSY (9-12h), OVERLOADED (>12h).
+            - TERMINOLOGY: Use "overloaded/relocate" ONLY for days >12h. Use "balancing/clearing" for BUSY days.
+            - ADVISORY TONE: Use "I suggest moving", "Consider shifting". NEVER say "I have moved/relocated".
+            
+            STRATEGIC RULES:
+            - TEMPORAL REALITY: Today is ${today} with ${remainingHoursInDay}h remaining.
+            - PROACTIVE RULE: Prioritize moving tasks to EARLIER safe dates (including Today) before future dates.
+            - IMPORTANCE-FIRST: Always suggest moving the LEAST IMPORTANT (lowest priority) task first.
+            - MITIGATION: If BUSY/OVERLOADED, suggest moving ONE task to the NEAREST safe date.
+            
+            FORMATTING:
+            - Exact names for "mitigationTaskName".
+            - YYYY-MM-DD for "mitigationTargetDate".
+            - Suggestion text: Human, proactive tone. Single quotes ONLY inside text.
 
-            RULES:
-            - DATA REALITY: You MUST create an entry in "insights" for EVERY unique deadline date provided. A task MUST ONLY appear in the entry that matches its current deadline. DO NOT pre-emptively move tasks between arrays in the JSON. Group exactly by current deadline.
-            - METRICS: Use exact [Estimation Memory: X.Xh] if present. If MISSING, you MUST generate a realistic duration (0.5 to 8h) based on task complexity. Returning 0.0 is a CRITICAL FAILURE.
-            - CAPACITY DEFINITIONS: 
-                * SAFE: < 9 hours total.
-                * BUSY: 9 - 12 hours total.
-                * OVERLOADED: > 12 hours total.
-            - SUMMARY ACCURACY: Your "overallSummary" MUST reflect these thresholds. If NO days are > 12h, DO NOT use words like 'overloaded' or 'relocate'. Instead, focus on 'balancing' or 'clearing' if days are Busy (9-12h).
-            - SUGGESTIVE PHRASING: You are an advisor, NOT a controller. Use phrasing like 'I suggest moving...', 'Relocating X would...', or 'Consider shifting...'. NEVER say 'A task has been moved' or 'I have relocated X', as you cannot actually modify the data yet.
-            - THE PROACTIVE RULE (MUST FOLLOW): When balancing a day, ALWAYS prioritize moving tasks to EARLIER safe dates (including Today) if any exist, before resorting to future dates. We want to be proactive, not just deferring.
-            - THE IMPORTANCE-FIRST RULE (MUST FOLLOW): Always select the LEAST IMPORTANT (lowest priority/low-urgency) task to move. Never suggest moving a High Priority task if a Medium or Low one can be moved instead.
-            - RELOCATIONS: Propose balancing ONLY if a day is BUSY or OVERLOADED. Move ONE task to the NEAREST safe date (preferring earlier dates per the Proactive Rule).
-            - FORMATTING: "mitigationTaskName" = exact original name. "mitigationTargetDate" = YYYY-MM-DD.
-            - SUGGESTION TEXT: Write in a highly conversational, proactive, human tone. Use short dates. ONLY use single-quotes, NEVER double-quotes inside text.
-
-            OUTPUT strict JSON:
+            OUTPUT SCHEMA:
             {
-              "insights": [
-                {
-                  "date": "YYYY-MM-DD",
-                  "totalHours": 0.0,
-                  "status": "SAFE|BUSY|OVERLOADED",
-                  "taskInsights": [{ "id": "task_id", "name": "Exact Name", "estimatedHours": 0.0 }],
-                  "suggestion": "Actionable recommendation text",
-                  "mitigationTaskName": "Exact Task Name",
-                  "mitigationTargetDate": "YYYY-MM-DD"
-                }
-              ],
-              "overallSummary": "High-level summary of the workload with a brief mention of the proposed adjustment."
+              "insights": [{
+                "date": "YYYY-MM-DD",
+                "totalHours": 0.0,
+                "status": "SAFE|BUSY|OVERLOADED",
+                "taskInsights": [{ "id": "task_id", "name": "Exact Name", "estimatedHours": 0.0 }],
+                "suggestion": "string",
+                "mitigationTaskName": "string",
+                "mitigationTargetDate": "YYYY-MM-DD"
+              }],
+              "overallSummary": "string"
             }`
         },
-        { role: "user", content: `Existing Tasks:\n${taskContext}` }
+        { role: "user", content: `${calendarContext}\n\nREMAINING TIME TODAY: ${remainingHoursInDay} hours\n\nExisting Tasks:\n${taskContext}` }
       ]
     });
     return response.choices[0]?.message?.content || "";
@@ -818,8 +828,9 @@ async function runCapacityAnalysis(_fingerprint: string, tasks: NotionTask[], us
     raw = await runAnalysis();
   } catch (error: any) {
     if (error?.status === 429 || error?.message?.includes("Rate limit")) {
-      rateLimitCooldownUntil = Date.now() + 15000;
-      return { insights: [], overallSummary: "Groq AI Rate Limit hit! Pausing analysis for 15 seconds to recover tokens..." };
+      rateLimitCooldownUntil = Date.now() + 60000;
+      // Injecting timestamp ensures React sees this as a 'new' status string and re-triggers the retry timer
+      return { insights: [], overallSummary: `Groq AI Rate Limit hit! Pausing analysis for 60 seconds to recover tokens... (Event: ${Date.now()})` };
     }
     console.error("Groq API Error running Capacity Analysis:", error);
     return { insights: [], overallSummary: "API Error: Please wait a minute before analyzing capacity again." };
@@ -827,19 +838,7 @@ async function runCapacityAnalysis(_fingerprint: string, tasks: NotionTask[], us
   const thinkMatch = raw.match(/<think>([\s\S]*?)<\/think>/);
   let thinkContext = thinkMatch ? thinkMatch[1].trim() : "";
 
-  let report = extractJSON<CapacityReport>(raw);
-
-  // Auto-Retry: If first parse fails (truncated think block, etc.), retry once
-  if (!report || !report.insights) {
-    try {
-      raw = await runAnalysis();
-      const retryThink = raw.match(/<think>([\s\S]*?)<\/think>/);
-      if (retryThink) thinkContext = retryThink[1].trim();
-      report = extractJSON<CapacityReport>(raw);
-    } catch (retryErr) {
-      console.error("Retry failed:", retryErr);
-    }
-  }
+  const report = extractJSON<CapacityReport>(raw);
 
   if (report && report.insights) {
     // Logic: Enforce persistent durations and recalibrate mathematical totals.
