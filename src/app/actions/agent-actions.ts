@@ -20,6 +20,7 @@ export interface AgentSuggestion {
   confidence: number;
   thinkContext?: string;
   updatedAt?: number;
+  deadline?: string;
 }
 
 export type AgentActions = "CREATE" | "READ" | "UPDATE" | "DELETE" | "SUGGEST" | "PLAN" | "UNCLEAR" | "OTHER";
@@ -325,8 +326,16 @@ export async function getAgentSuggestion(tasks: NotionTask[], userOffset: string
   // Merge think contexts if available from different sources
   const finalThinkContext = thinkContext || result.thinkContext || "";
   const updatedAt = Date.now();
+  // Find the exact task to attach metadata (like deadline)
+  const matchedTask = activeTasks.find(t => t.name.toLowerCase().trim() === result.suggestion.toLowerCase().trim());
 
-  return { ...result, priority, thinkContext: finalThinkContext, updatedAt };
+  return {
+    ...result,
+    priority,
+    thinkContext: finalThinkContext,
+    updatedAt,
+    deadline: matchedTask?.deadline
+  };
 }
 
 
@@ -768,10 +777,18 @@ async function runCapacityAnalysis(_fingerprint: string, tasks: NotionTask[], us
 
             RULES:
             - DATA REALITY: You MUST create an entry in "insights" for EVERY unique deadline date provided. A task MUST ONLY appear in the entry that matches its current deadline. DO NOT pre-emptively move tasks between arrays in the JSON. Group exactly by current deadline.
-            - METRICS: Use exact [Estimation Memory: X.Xh] if present. If MISSING, you MUST generate a realistic duration (0.5 to 8h) based on task complexity. Returning 0.0 is a CRITICAL FAILURE. 
-            - RELOCATIONS: Prevent OVERLOADED days by moving ONE task to the nearest SAFE date. You MUST move the task to a DIFFERENT day.
+            - METRICS: Use exact [Estimation Memory: X.Xh] if present. If MISSING, you MUST generate a realistic duration (0.5 to 8h) based on task complexity. Returning 0.0 is a CRITICAL FAILURE.
+            - CAPACITY DEFINITIONS: 
+                * SAFE: < 9 hours total.
+                * BUSY: 9 - 12 hours total.
+                * OVERLOADED: > 12 hours total.
+            - SUMMARY ACCURACY: Your "overallSummary" MUST reflect these thresholds. If NO days are > 12h, DO NOT use words like 'overloaded' or 'relocate'. Instead, focus on 'balancing' or 'clearing' if days are Busy (9-12h).
+            - SUGGESTIVE PHRASING: You are an advisor, NOT a controller. Use phrasing like 'I suggest moving...', 'Relocating X would...', or 'Consider shifting...'. NEVER say 'A task has been moved' or 'I have relocated X', as you cannot actually modify the data yet.
+            - THE PROACTIVE RULE (MUST FOLLOW): When balancing a day, ALWAYS prioritize moving tasks to EARLIER safe dates (including Today) if any exist, before resorting to future dates. We want to be proactive, not just deferring.
+            - THE IMPORTANCE-FIRST RULE (MUST FOLLOW): Always select the LEAST IMPORTANT (lowest priority/low-urgency) task to move. Never suggest moving a High Priority task if a Medium or Low one can be moved instead.
+            - RELOCATIONS: Propose balancing ONLY if a day is BUSY or OVERLOADED. Move ONE task to the NEAREST safe date (preferring earlier dates per the Proactive Rule).
             - FORMATTING: "mitigationTaskName" = exact original name. "mitigationTargetDate" = YYYY-MM-DD.
-            - SUGGESTION TEXT: Write in a highly conversational, proactive, human tone (e.g., 'I noticed Apr 3 is heavily overloaded. Let us pull Grammar Edits to Apr 2 to free up your schedule'). Use short dates. ONLY use single-quotes, NEVER double-quotes inside text.
+            - SUGGESTION TEXT: Write in a highly conversational, proactive, human tone. Use short dates. ONLY use single-quotes, NEVER double-quotes inside text.
 
             OUTPUT strict JSON:
             {
@@ -781,12 +798,12 @@ async function runCapacityAnalysis(_fingerprint: string, tasks: NotionTask[], us
                   "totalHours": 0.0,
                   "status": "SAFE|BUSY|OVERLOADED",
                   "taskInsights": [{ "id": "task_id", "name": "Exact Name", "estimatedHours": 0.0 }],
-                  "suggestion": "Actionable suggestion text",
+                  "suggestion": "Actionable recommendation text",
                   "mitigationTaskName": "Exact Task Name",
                   "mitigationTargetDate": "YYYY-MM-DD"
                 }
               ],
-              "overallSummary": "Summary"
+              "overallSummary": "High-level summary of the workload with a brief mention of the proposed adjustment."
             }`
         },
         { role: "user", content: `Existing Tasks:\n${taskContext}` }
@@ -957,8 +974,8 @@ export async function generateHorizonRoadmap(goalPrompt: string): Promise<Horizo
         ${capacityContext}
         
         PLANNING RULES:
-        1. STRATEGIC SEQUENCING: Look at the CURRENT WORKLOAD above before assigning tasks.
-        2. SMART AVOIDANCE: If a date is "BUSY" or "OVERLOADED" in the list above, DO NOT schedule new tasks on that day. Skip it and find the next available day with < 6 hours of existing work.
+        1. STRATEGIC SEQUENCING: Prioritize your REAL-WORLD availability. Look at the CURRENT WORKLOAD above before assigning tasks.
+        2. SMART AVOIDANCE: If a date is labeled "BUSY" or "OVERLOADED" (meaning it has >= 9 hours of work), DO NOT schedule new tasks on that day. Skip it and find the next available day with < 7 hours of existing work to ensure you don't instantly make it "BUSY".
         3. HARD CAP: Ensure the NEW roadmap tasks + EXISTING workload never exceed 12 hours total for any single day.
         4. ROADMAP STRUCTURE: Generate 4 - 8 subtasks that logically complete the goal.
         

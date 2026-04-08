@@ -38,11 +38,31 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
         const userOffset = `${sign}${hours}:${minutes}`;
 
         const freshTasks = await fetchNotionTasks();
-        
+        if (!freshTasks) return;
+
+        // Smart Consistency Check
+        const currentFingerprint = [...freshTasks]
+          .sort((a, b) => a.id.localeCompare(b.id))
+          .map(t => `${t.id}-${t.status}-${t.name}-${t.deadline}`)
+          .join("|");
+        const todayStr = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split("T")[0];
+        const lastFingerprint = localStorage.getItem("proactive_capacity_fingerprint_strategy");
+        const lastFetchDay = localStorage.getItem("proactive_capacity_last_day_strategy");
+
+        // Logic: Skip AI cost if data is identical AND it's the same day.
+        if (report && !loading && currentFingerprint === lastFingerprint && todayStr === lastFetchDay) {
+          return;
+        }
+
         // Load persistent estimation memory from LocalStorage
         const savedEstimates = JSON.parse(localStorage.getItem("proactive_task_estimates") || "{}");
         
         const data = await getCapacityInsights(freshTasks, userOffset, savedEstimates);
+        
+        // Update fingerprints after successful call
+        localStorage.setItem("proactive_capacity_fingerprint_strategy", currentFingerprint);
+        localStorage.setItem("proactive_capacity_last_day_strategy", todayStr);
+        
         setReport(data);
 
         // Save any NEWLY generated estimates back to LocalStorage
@@ -65,10 +85,20 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
           const newAlertsStr = JSON.stringify(alerts);
           const hasStructuralChange = lastAlertsStr !== newAlertsStr;
 
+          // Force refresh if any task deadline changed — catches stale suggestion text
+          // even when the alert structure looks identical (same date/status, different deadline)
+          const currentDeadlineFingerprint = freshTasks
+            .filter(t => t.status?.toLowerCase() !== "done")
+            .map(t => `${t.id}:${t.deadline ?? ""}`)
+            .sort()
+            .join("|");
+          const deadlineChanged = currentDeadlineFingerprint !== (lastStored.deadlineFingerprint || "");
+
           localStorage.setItem("proactive_capacity_alerts", JSON.stringify({
             alerts,
             summary: data.overallSummary,
-            updatedAt: hasStructuralChange ? Date.now() : (lastStored.updatedAt || Date.now())
+            deadlineFingerprint: currentDeadlineFingerprint,
+            updatedAt: (hasStructuralChange || deadlineChanged) ? Date.now() : (lastStored.updatedAt || Date.now())
           }));
           window.dispatchEvent(new Event('capacity-alerts-updated'));
         }
@@ -85,8 +115,10 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
     window.addEventListener('notion-tasks-updated', handleSync);
     
     fetchInsights();
-
-    return () => window.removeEventListener('notion-tasks-updated', handleSync);
+ 
+    return () => {
+      window.removeEventListener('notion-tasks-updated', handleSync);
+    };
   }, [tasks, initialReport]);
 
   // AUTO-RETRY: Detect rate limits and self-heal automatically

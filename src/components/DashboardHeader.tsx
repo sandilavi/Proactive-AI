@@ -69,6 +69,7 @@ export default function DashboardHeader() {
   const [mitigationStates, setMitigationStates] = useState<Record<string, 'idle' | 'loading' | 'done' | 'rejected'>>({});
   // Shield to hide recently resolved tasks during Notion API propagation delay (45s)
   const [resolutionShield, setResolutionShield] = useState<Record<string, number>>({});
+  const [hasRejectedAll, setHasRejectedAll] = useState(false);
 
   const handleAcceptMitigation = useCallback(async (alertId: string, taskName: string, targetDate: string) => {
     setMitigationStates(prev => ({ ...prev, [alertId]: 'loading' }));
@@ -150,8 +151,23 @@ export default function DashboardHeader() {
           const validAlerts = (parsed.alerts || []).filter((a: any) => (a.totalHours || 0) > 0 && a.date);
           parsed.alerts = validAlerts;
 
+          // Filter out persistently rejected suggestions
+          const rejected = JSON.parse(localStorage.getItem("proactive_rejected_moves") || "[]");
+          const filteredAlerts = (parsed.alerts || []).filter((a: any) => {
+             if (!a.mitigationTaskName || !a.mitigationTargetDate) return true;
+             const key = `${a.mitigationTaskName}|${a.date}|${a.mitigationTargetDate}`;
+             return !rejected.includes(key);
+          });
+          
+          parsed.alerts = filteredAlerts;
+          
+          // Count how many were rejected vs how many were provided
+          const totalInsights = validAlerts.length;
+          const visibleInsights = filteredAlerts.length;
+          setHasRejectedAll(totalInsights > 0 && visibleInsights === 0);
+
           setCapacityData(parsed);
-          setHasOverload(validAlerts.some((a: any) => a.status === "OVERLOADED"));
+          setHasOverload(filteredAlerts.some((a: any) => a.status === "OVERLOADED"));
           
           // Calculate Unread (Read vs Updated timestamp)
           const lastReadTime = Number(localStorage.getItem("proactive_last_capacity_read_timestamp") || 0);
@@ -287,7 +303,14 @@ export default function DashboardHeader() {
                   {(!capacityData || capacityData.alerts.length === 0) ? (
                     <div className="py-12 flex flex-col items-center justify-center text-center">
                        <Target className="text-slate-200 mb-4" size={48} />
-                       <p className="text-xs font-bold text-slate-400 tracking-tight">Your workload is perfectly balanced. <br /> All days are within safe capacity levels.</p>
+                       <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 leading-none">
+                          {hasRejectedAll ? "Suggestions Dismissed" : "Schedule Optimized"}
+                       </h3>
+                       <p className="text-xs font-bold text-slate-400 tracking-tight max-w-[220px] mx-auto italic">
+                          {hasRejectedAll 
+                            ? "You have manually managed your current workload bottlenecks." 
+                            : "Your workload is perfectly balanced. All days are within safe capacity levels."}
+                       </p>
                     </div>
                   ) : (
                     capacityData.alerts
@@ -367,6 +390,17 @@ export default function DashboardHeader() {
                                         <button 
                                           onClick={(e) => {
                                             e.stopPropagation();
+                                            
+                                            // 1. PERSISTENCE: Save this specific move to the Rejection Vault
+                                            if (alert.mitigationTaskName && alert.mitigationTargetDate) {
+                                              const key = `${alert.mitigationTaskName}|${alert.date}|${alert.mitigationTargetDate}`;
+                                              const rejected = JSON.parse(localStorage.getItem("proactive_rejected_moves") || "[]");
+                                              if (!rejected.includes(key)) {
+                                                rejected.push(key);
+                                                localStorage.setItem("proactive_rejected_moves", JSON.stringify(rejected));
+                                              }
+                                            }
+
                                             setMitigationStates(prev => ({ ...prev, [alertId]: 'rejected' }));
                                             // Vanish after 1.5s
                                             setTimeout(() => {
@@ -509,9 +543,17 @@ export default function DashboardHeader() {
                                 <p className="text-[12px] font-bold text-slate-400 line-through italic px-3 opacity-60">Dismissed</p>
                               ) : (
                                 <>
-                                  <p className={`text-[13px] font-bold leading-tight tracking-tight pr-4 ${isNew ? 'text-slate-900' : 'text-slate-600'}`}>
-                                    {toast.mitigationSuggestion || toast.taskName}
-                                  </p>
+                                    <div className="flex flex-col gap-1.5 min-w-0 pr-4">
+                                      <p className={`text-[13px] font-bold leading-tight tracking-tight ${isNew ? 'text-slate-900' : 'text-slate-600'}`}>
+                                        {toast.mitigationSuggestion || toast.taskName}
+                                      </p>
+                                      {toast.deadline && toast.deadline !== "No Deadline" && (
+                                        <div className={`flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest ${isNew ? 'text-rose-600/80' : 'text-slate-400'}`}>
+                                          <Clock size={10} strokeWidth={3} />
+                                          <span>Due: {formatDeadline(toast.deadline)}</span>
+                                        </div>
+                                      )}
+                                    </div>
 
                                   {/* ACTION BUTTONS DIRECTLY IN NOTIFICATION PANEL */}
                                   {mitigationStates[toast.id] !== 'done' && mitigationStates[toast.id] !== 'rejected' && toast.mitigationTaskName && toast.mitigationTargetDate && (

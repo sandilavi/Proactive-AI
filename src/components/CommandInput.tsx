@@ -148,11 +148,11 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
       const isSameDay = lastFetchDay === todayStr;
       
       // Logic: Only re-fetch if tasks changed OR it's a new day (past midnight).
-      // If tasks are identical and it's the same day, persist the suggestion.
+      // Also force re-fetch if we're missing the 'deadline' field (schema upgrade).
       if (cached && isTaskListSame && isSameDay) {
         try {
           const parsed = JSON.parse(cached);
-          if (parsed && parsed.suggestion && typeof parsed.confidence === "number" && parsed.priority) {
+          if (parsed && parsed.suggestion && typeof parsed.confidence === "number" && parsed.priority && parsed.deadline) {
             // Apply the fallback in case this was cached before the feature was added
             if (!parsed.updatedAt) {
               parsed.updatedAt = parseInt(lastFetch || Date.now().toString(), 10);
@@ -182,25 +182,39 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
           // 1. If suggestion & priority match EXACTLY:
           //    - If confidence change is minor (< 15%), stick to the old card entirely (no flicker).
           //    - If confidence change is major (>= 15%), update the whole card (reveal new reasoning).
+          // EXCEPTION: If the suggested task's deadline changed in Notion, always show fresh data.
           if (cached) {
             try {
               const old = JSON.parse(cached);
               const isSameTask = old && old.suggestion === newSuggestion.suggestion && old.priority === newSuggestion.priority && isSameDay;
               
               if (isSameTask) {
-                // If it's the exact same advice (even if confidence changed), preserve the original time
-                finalSuggestion.updatedAt = old.updatedAt || parseInt(lastFetch || Date.now().toString(), 10);
-                
-                const confDiff = Math.abs((old.confidence || 0) - (newSuggestion.confidence || 0));
-                if (confDiff < 0.15) {
-                  // Minor shift: Use old text AND old confidence to keep UI "frozen"
-                  finalSuggestion = {
-                    ...finalSuggestion,
-                    reason: old.reason,
-                    confidence: old.confidence,
-                    thinkContext: old.thinkContext ?? newSuggestion.thinkContext
-                  };
+                // Check if the suggested task's deadline has changed since last cache
+                const suggestedTaskNameLower = (newSuggestion.suggestion || "").toLowerCase().trim();
+                const currentTaskMatch = (taskList || initialTasks || []).find(
+                  t => t.name?.toLowerCase().trim() === suggestedTaskNameLower
+                );
+                const oldDeadline = old.deadline ?? "";
+                const currentDeadline = currentTaskMatch?.deadline ?? newSuggestion.deadline ?? "";
+                const deadlineChanged = currentDeadline !== "" && currentDeadline !== oldDeadline;
+
+                if (!deadlineChanged) {
+                  // Deadline is the same — apply normal freeze logic
+                  // If it's the exact same advice (even if confidence changed), preserve the original time
+                  finalSuggestion.updatedAt = old.updatedAt || parseInt(lastFetch || Date.now().toString(), 10);
+                  
+                  const confDiff = Math.abs((old.confidence || 0) - (newSuggestion.confidence || 0));
+                  if (confDiff < 0.15) {
+                    // Minor shift: Use old text AND old confidence to keep UI "frozen"
+                    finalSuggestion = {
+                      ...finalSuggestion,
+                      reason: old.reason,
+                      confidence: old.confidence,
+                      thinkContext: old.thinkContext ?? newSuggestion.thinkContext
+                    };
+                  }
                 }
+                // else: deadline changed — skip freeze, use fully fresh finalSuggestion with new reason/deadline
               }
             } catch {
               // Ignore parse errors, just use new suggestion
@@ -352,7 +366,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
       {suggestion && !message && !pendingDecision && status === "idle" && (() => {
          // Local narrow to satisfy TS
          const currentSug = suggestion;
-         const dateStr = new Date(currentSug.updatedAt || Date.now()).toLocaleString([], { month: 'short', day: 'numeric' }) + ", " + new Date(currentSug.updatedAt || Date.now()).toLocaleString([], { hour: 'numeric', minute: '2-digit' });
+         const dateStr = new Date(currentSug.updatedAt || Date.now()).toLocaleString([], { hour: 'numeric', minute: '2-digit' });
          const p = (currentSug.priority || "MEDIUM").toUpperCase();
          
          const pStyle = 
@@ -415,9 +429,6 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                             {p}
                          </div>
                        </div>
-                       <div className="text-[11px] font-black text-white/40 uppercase tracking-[0.2em] pl-1">
-                          Generated at {dateStr}
-                       </div>
                     </div>
                     
                     <div className="flex flex-col items-end gap-2 text-right">
@@ -432,17 +443,28 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                  </div>
 
                  <div className="space-y-4 w-full">
-                    <h3 className="text-4xl font-black leading-tight tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-white via-white to-white/70">
-                       {currentSug.suggestion}
-                    </h3>
-                    <p className="text-xl font-medium text-white/70 leading-relaxed tracking-tight">
-                       {currentSug.reason}
-                    </p>
-                 </div>
+                     <div className="flex flex-col gap-0.5">
+                        <h3 className="text-4xl font-black leading-tight tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-white via-white to-white/70">
+                           {currentSug.suggestion}
+                        </h3>
+                        {currentSug.deadline && currentSug.deadline !== "No Deadline" && (
+                          <div className="text-[18px] font-black uppercase tracking-[0.1em] text-white/50 leading-none">
+                            Due: {formatDeadline(currentSug.deadline)}
+                          </div>
+                        )}
+                     </div>
+                     <p className="text-xl font-medium text-white/70 leading-relaxed tracking-tight pt-2">
+                        {currentSug.reason}
+                     </p>
+                     
+                     <div className="text-[10px] font-bold text-white/50 uppercase tracking-[0.3em] pt-0.5 scale-[0.7] origin-left">
+                        Generated at {dateStr}
+                     </div>
+                  </div>
 
                  {/* Proactive Thinking Block */}
                  {currentSug.thinkContext && (
-                   <div className="mt-10 pt-8 border-t border-white/10">
+                   <div className="mt-4 pt-6 border-t border-white/10">
                      <button
                        type="button"
                        onClick={() => setProactiveThinkOpen(!proactiveThinkOpen)}

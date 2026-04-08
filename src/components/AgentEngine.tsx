@@ -11,6 +11,7 @@ interface ProactiveAlert {
   taskName: string;
   urgency: "OVERDUE" | "TODAY" | "TOMORROW" | "SOON" | "CAPACITY_BUSY" | "CAPACITY_OVERLOADED";
   deadline: string;
+  date: string;
   timestamp: string;
   alertedAt?: number;
   read: boolean;
@@ -18,11 +19,17 @@ interface ProactiveAlert {
   mitigationSuggestion?: string;
   mitigationTaskName?: string;
   mitigationTargetDate?: string;
+  suggestion?: string;
+  totalHours?: number;
+  status?: string;
 }
 
 export default function AgentEngine() {
   const activeToastsRef = useRef<ProactiveAlert[]>([]);
   const taskFingerprintRef = useRef<string>("");
+  const capacityFingerprintRef = useRef<string>("");
+  const notifiedUrgentRef = useRef<Set<string>>(new Set());
+  const notifiedCapacityRef = useRef<Set<string>>(new Set());
 
   const fireOsNotification = useCallback((alert: ProactiveAlert) => {
     const urgencyLabel: Record<ProactiveAlert["urgency"], string> = {
@@ -33,9 +40,9 @@ export default function AgentEngine() {
       CAPACITY_BUSY: "⚠️ HEAVY LOAD",
       CAPACITY_OVERLOADED: "🔥 OVERLOADED"
     };
-    const body = `"${alert.taskName}" — ${urgencyLabel[alert.urgency]}`;
+    const body = alert.mitigationSuggestion || alert.suggestion || `"${alert.taskName}" — ${urgencyLabel[alert.urgency]}`;
     if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
-      new Notification("ProActiveAI Intelligence", { body, icon: "/favicon.ico", tag: alert.taskId });
+      new Notification("ProActiveAI Intelligence", { body, icon: "/favicon.ico", tag: alert.id });
     }
   }, []);
 
@@ -52,13 +59,14 @@ export default function AgentEngine() {
     const syncNotifications = async () => {
       try {
         // 1. Fetch fresh data from Notion directly to ensure parity with StrategyView
-        const { fetchNotionTasks } = await import("@/app/actions/notion-actions");
         const freshTasks = await fetchNotionTasks();
         if (!freshTasks) return;
 
         const now = new Date();
+        // USE LOCAL ISO STRING: Ensures 'today' rolls over at the user's actual midnight, not UTC's.
+        const today = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
         const prevToasts = activeToastsRef.current;
-        const currentFingerprint = [...freshTasks]
+        const currentFingerprint = `v11|${today}|` + [...freshTasks]
           .sort((a, b) => a.id.localeCompare(b.id))
           .map(t => `${t.id}-${t.status}-${t.name}-${t.deadline}`)
           .join("|");
@@ -73,69 +81,152 @@ export default function AgentEngine() {
           if (!task.deadline || task.status?.toLowerCase() === "done") continue;
           
           const deadline = new Date(task.deadline);
-          const diffDays = Math.ceil((deadline.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+          const deadlineTime = deadline.getTime();
+          const nowTime = now.getTime();
           
           let urgency: ProactiveAlert["urgency"] | null = null;
-          if (diffDays < 0) urgency = "OVERDUE";
-          else if (diffDays === 0) urgency = "TODAY";
-          else if (diffDays === 1) urgency = "TOMORROW";
-          else if (diffDays <= 3) urgency = "SOON";
+          
+          if (task.deadline) {
+            const deadlineStr = task.deadline.split('T')[0];
+            const deadlineDate = new Date(deadlineStr);
+            const nowNoTime = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            
+            // Calculate day difference using local midnights
+            const diffTime = deadlineDate.getTime() - nowNoTime.getTime();
+            const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+
+            if (deadlineStr < today) urgency = "OVERDUE";
+            else if (deadlineStr === today) {
+                // PRECISION CHECK: If it's today, only flip to OVERDUE if it has a specific time
+                const dText = task.deadline.toUpperCase();
+                const hasTime = dText.includes('T') || dText.includes(':') || dText.includes('.') || dText.includes('AM') || dText.includes('PM');
+                
+                if (hasTime) {
+                    const deadlineTime = new Date(task.deadline).getTime();
+                    const currentTime = now.getTime();
+                    if (currentTime > deadlineTime) {
+                        urgency = "OVERDUE";
+                    } else {
+                        urgency = "TODAY";
+                    }
+                } else {
+                    // No time component? It's "Due Today" for the entire day.
+                    urgency = "TODAY";
+                }
+            }
+            else if (diffDays === 1) urgency = "TOMORROW";
+            else if (diffDays > 1 && diffDays <= 3) urgency = "SOON";
+          }
 
           if (urgency) {
-            const alertedKey = `proactive_alert_${task.id}_${urgency}`;
+            const existingAlert = prevToasts.find(t => t.taskId === task.id);
             const nowString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            let alertedMs = Date.now();
             let alertTimestamp = nowString;
+            let alertedMs = Date.now();
             let isFreshAlert = true;
+            let isFreshId = true;
 
-            const saved = typeof window !== "undefined" ? localStorage.getItem(alertedKey) : null;
-            if (saved) {
-              try {
-                const parsed = JSON.parse(saved);
-                alertTimestamp = parsed.displayTime || nowString;
-                alertedMs = parsed.alertedAt || Date.now();
+            const currentUrgency = urgency; // Narrowing for TS safety
+
+            // CHECK: Did we already alert the user at this level OR a more critical level?
+            if (existingAlert) {
+              const oldRank = urgencyRank[existingAlert.urgency];
+              const newRank = urgencyRank[currentUrgency];
+              
+              if (newRank < oldRank || (existingAlert.urgency === "OVERDUE" && currentUrgency === "TODAY")) {
+                // Task became MORE critical (e.g. Tomorrow -> Today) OR we are performing a Correction (Overdue -> Today)
+                isFreshAlert = true;
+                // Generate a NEW ID to trigger a "NEW" badge and fresh notification
+                alertedMs = Date.now();
+                isFreshId = true;
+              } else {
+                // Task is same or less critical (already notified)
+                // PRESERVE the original "alertedAt" to keep the ID stable and avoid ghost "NEW" badges
+                alertTimestamp = existingAlert.timestamp;
+                alertedMs = existingAlert.alertedAt || Date.now();
                 isFreshAlert = false;
-              } catch {}
+                isFreshId = false;
+              }
+            } else {
+              // Check Persistent Storage if session is fresh
+              // Key includes deadline so a deadline change invalidates the old cache
+              const alertedKeyPrefix = `proactive_alert_${task.id}_${task.deadline ?? ""}_`;
+              const allKeys = typeof window !== "undefined" ? Object.keys(localStorage) : [];
+              const taskKeys = allKeys.filter(k => k.startsWith(alertedKeyPrefix));
+              
+              if (taskKeys.length > 0) {
+                let bestPreviousRank = 99;
+                let bestPrevData: { alertedAt?: number; displayTime?: string } | null = null;
+                
+                taskKeys.forEach(k => {
+                  const levelStr = k.replace(alertedKeyPrefix, "");
+                  const rank = (urgencyRank as any)[levelStr];
+                  if (typeof rank === 'number' && rank < bestPreviousRank) {
+                    bestPreviousRank = rank;
+                    try {
+                      const saved = localStorage.getItem(k);
+                      if (saved) bestPrevData = JSON.parse(saved);
+                    } catch {}
+                  }
+                });
+
+                if (urgencyRank[currentUrgency] < bestPreviousRank) {
+                  isFreshAlert = true;
+                } else if (bestPrevData) {
+                  const data = bestPrevData as { displayTime?: string; alertedAt?: number; originalUrgency?: ProactiveAlert["urgency"] };
+                  alertTimestamp = data.displayTime || nowString;
+                  alertedMs = data.alertedAt || Date.now();
+                  // RESTORE: Use the more critical urgency from history to avoid ghost notifications
+                  if (data.originalUrgency) urgency = data.originalUrgency;
+                  isFreshAlert = false;
+                }
+              }
             }
 
             if (isFreshAlert) {
+               // Include deadline in key so stale cache is busted when deadline changes
+               const alertedKey = `proactive_alert_${task.id}_${task.deadline ?? ""}_${currentUrgency}`;
                const alreadyFreshInSession = prevToasts.some(t => t.taskId === task.id && t.urgency === urgency);
-               if (!alreadyFreshInSession) {
-                 if (typeof window !== "undefined") {
-                   localStorage.setItem(alertedKey, JSON.stringify({ alertedAt: alertedMs, displayTime: alertTimestamp }));
-                 }
-                 
-                 // Fire OS Notification for truly fresh events
-                 fireOsNotification({
-                    id: `${task.id}-${urgency}-${alertedMs}`,
-                    taskId: task.id,
-                    taskName: task.name,
-                    urgency,
-                    deadline: task.deadline || "",
-                    timestamp: alertTimestamp,
-                    alertedAt: alertedMs,
-                    read: false // Matches type
-                 });
-               }
+                if (!alreadyFreshInSession) {
+                  const urgentNotificationKey = `${task.id}-${urgency}`;
+                  if (!notifiedUrgentRef.current.has(urgentNotificationKey)) {
+                    // STAMP FIRST: Claim the slot before firing to prevent async race conditions
+                    notifiedUrgentRef.current.add(urgentNotificationKey);
+
+                    if (typeof window !== "undefined") {
+                      localStorage.setItem(alertedKey, JSON.stringify({ alertedAt: alertedMs, displayTime: alertTimestamp, originalUrgency: currentUrgency }));
+                    }
+                    
+                    // Fire OS Notification for truly fresh events
+                    fireOsNotification({
+                       id: `${task.id}-${urgency}-${alertedMs}`,
+                       taskId: task.id,
+                       taskName: task.name,
+                       urgency,
+                       deadline: task.deadline || "",
+                       date: task.deadline || "",
+                       timestamp: alertTimestamp,
+                       alertedAt: alertedMs,
+                       read: false
+                    });
+                  }
+                }
             }
 
             urgentAlerts.push({ 
-              id: `${task.id}-${urgency}-${alertedMs}`,
+              id: isFreshId ? `${task.id}-${urgency}-${alertedMs}` : existingAlert?.id || `${task.id}-${urgency}-${alertedMs}`,
               taskId: task.id, 
               taskName: task.name, 
               urgency, 
               deadline: task.deadline ?? "", 
+              date: task.deadline ?? "",
               timestamp: alertTimestamp,
               alertedAt: alertedMs,
-              read: false
+              read: isFreshId ? false : (existingAlert?.read || false)
             });
           }
         }
 
-        // Global Sync: Sort so most recent is at the top
-        const sorted = [...urgentAlerts].sort((a, b) => (b.alertedAt || 0) - (a.alertedAt || 0));
-        localStorage.setItem("proactive_active_toasts", JSON.stringify(sorted));
-        
         // Signal that new alerts are ready
         window.dispatchEvent(new Event('notifications-updated'));
         
@@ -143,12 +234,13 @@ export default function AgentEngine() {
           window.dispatchEvent(new Event('notion-tasks-updated'));
         }
         
-        activeToastsRef.current = sorted;
+
 
         // Logic: Monitor capacity state and trigger notifications on change.
-        const storedFingerprint = localStorage.getItem("proactive_tasks_fingerprint");
+        const storedFingerprint = localStorage.getItem("proactive_capacity_fingerprint");
+        const currentCapacityFingerprint = `v9|${today}|${currentFingerprint}`;
         
-        if (currentFingerprint !== storedFingerprint) {
+        if (currentCapacityFingerprint !== storedFingerprint) {
             const offsetMinutes = -now.getTimezoneOffset();
             const sign = offsetMinutes >= 0 ? '+' : '-';
             const hours = Math.floor(Math.abs(offsetMinutes) / 60).toString().padStart(2, '0');
@@ -172,40 +264,87 @@ export default function AgentEngine() {
                    localStorage.setItem("proactive_task_estimates", JSON.stringify(updatedEstimates));
                 }
 
-                const results = report.insights.filter(i => i.status === "BUSY" || i.status === "OVERLOADED");
+                // Filter results based on STRICT mathematical thresholds (AI can sometimes hallucinate status)
+                const results = report.insights.filter(i => (i.totalHours || 0) > 9 || i.status === "BUSY" || i.status === "OVERLOADED");
                 
-                // Add capacity-specific insights
-                const capacityAlerts: any[] = results.map(i => ({
-                    id: `capacity-${i.date}`,
-                    taskId: `capacity-${i.date}`,
-                    taskName: i.status === "OVERLOADED" ? `Overload on ${i.date}` : `Heavy Workload on ${i.date}`,
-                    urgency: i.status === "OVERLOADED" ? "CAPACITY_OVERLOADED" : "CAPACITY_BUSY",
-                    deadline: i.date,
-                    timestamp: new Date().toISOString(),
-                    suggestion: i.suggestion,
-                    mitigationSuggestion: i.suggestion,
-                    mitigationTaskName: i.mitigationTaskName,
-                    mitigationTargetDate: i.mitigationTargetDate,
-                    totalHours: i.totalHours,
-                    status: i.status,
-                    date: i.date // CRITICAL: Required by DashboardHeader filter
-                }));
+                // Get persistent rejections to avoid double-processing
+                const rejected = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("proactive_rejected_moves") || "[]") : [];
 
-                localStorage.setItem("proactive_tasks_fingerprint", currentFingerprint);
+                // Add capacity-specific insights
+                const capacityAlerts: ProactiveAlert[] = results.map(i => {
+                    const alert = {
+                        id: `capacity-${i.date}`,
+                        taskId: `capacity-${i.date}`,
+                        taskName: i.status === "OVERLOADED" ? `Overload on ${i.date}` : `Heavy Workload on ${i.date}`,
+                        urgency: i.status === "OVERLOADED" ? "CAPACITY_OVERLOADED" : "CAPACITY_BUSY",
+                        deadline: i.date,
+                        date: i.date,
+                        timestamp: new Date().toISOString(),
+                        alertedAt: Date.now(),
+                        read: false,
+                        suggestion: i.suggestion,
+                        totalHours: i.totalHours,
+                        status: i.totalHours > 12 ? "OVERLOADED" : i.totalHours > 9 ? "BUSY" : i.status,
+                        mitigationSuggestion: i.suggestion,
+                        mitigationTaskName: i.mitigationTaskName,
+                        mitigationTargetDate: i.mitigationTargetDate,
+                    } as ProactiveAlert;
+
+                    // Trigger OS Notification for NEW capacity alerts
+                    const notificationKey = `${alert.id}-${alert.urgency}-${i.suggestion?.slice(0, 50)}`;
+                    if (!notifiedCapacityRef.current.has(notificationKey)) {
+                        fireOsNotification(alert);
+                        notifiedCapacityRef.current.add(notificationKey);
+                    }
+
+                    return alert;
+                }).filter(a => {
+                    if (!a.mitigationTaskName || !a.mitigationTargetDate) return true;
+                    const key = `${a.mitigationTaskName}|${a.date}|${a.mitigationTargetDate}`;
+                    return !rejected.includes(key);
+                });
+
+                localStorage.setItem("proactive_capacity_fingerprint", currentCapacityFingerprint);
                 
+                // Compute deadline fingerprint for change-detection in StrategyView
+                const deadlineFingerprint = freshTasks
+                  .filter(t => t.status?.toLowerCase() !== "done")
+                  .map(t => `${t.id}:${t.deadline ?? ""}`)
+                  .sort()
+                  .join("|");
+
                 // CRITICAL: Only update the 'updatedAt' timestamp if we actually HAVE alerts to show.
                 // This prevents "Ghost Notifications" from appearing when there's nothing to see.
                 const lastData = JSON.parse(localStorage.getItem("proactive_capacity_alerts") || "{}");
                 const hasNewAlerts = capacityAlerts.length > 0;
+                const deadlineChanged = deadlineFingerprint !== (lastData.deadlineFingerprint || "");
                 
                 localStorage.setItem("proactive_capacity_alerts", JSON.stringify({
                     alerts: capacityAlerts,
                     summary: report.overallSummary,
-                    updatedAt: hasNewAlerts ? Date.now() : (lastData.updatedAt || Date.now())
+                    deadlineFingerprint,
+                    updatedAt: (hasNewAlerts || deadlineChanged) ? Date.now() : (lastData.updatedAt || Date.now())
                 }));
-                
+
+                // FINAL SYNC (System Alerts Hub): Sort so most recent is at the top
+                const finalToasts = [...urgentAlerts].sort((a, b) => (b.alertedAt || 0) - (a.alertedAt || 0));
+                localStorage.setItem("proactive_active_toasts", JSON.stringify(finalToasts));
+                activeToastsRef.current = finalToasts;
+                window.dispatchEvent(new Event('notifications-updated'));
                 window.dispatchEvent(new Event('capacity-alerts-updated'));
+            } else {
+              // NO CHANGES: Keep existing alerts but make sure state is ready
+              const finalToasts = [...urgentAlerts].sort((a, b) => (b.alertedAt || 0) - (a.alertedAt || 0));
+              localStorage.setItem("proactive_active_toasts", JSON.stringify(finalToasts));
+              activeToastsRef.current = finalToasts;
+              window.dispatchEvent(new Event('capacity-alerts-updated'));
             }
+        } else {
+            // NO CHANGES: Keep existing alerts but make sure state is ready
+            const finalToasts = [...urgentAlerts].sort((a, b) => (b.alertedAt || 0) - (a.alertedAt || 0));
+            localStorage.setItem("proactive_active_toasts", JSON.stringify(finalToasts));
+            activeToastsRef.current = finalToasts;
+            window.dispatchEvent(new Event('capacity-alerts-updated'));
         }
 
       } catch (err) {
@@ -216,11 +355,19 @@ export default function AgentEngine() {
     syncNotifications();
     const intervalId = setInterval(syncNotifications, NOTIFICATION_INTERVAL);
     
+    const handleManualRefresh = () => {
+        syncNotifications();
+    };
+    window.addEventListener('notion-tasks-updated', handleManualRefresh);
+
     if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
         Notification.requestPermission();
     }
 
-    return () => clearInterval(intervalId);
+    return () => {
+        clearInterval(intervalId);
+        window.removeEventListener('notion-tasks-updated', handleManualRefresh);
+    };
   }, [fireOsNotification]);
 
   return null;
