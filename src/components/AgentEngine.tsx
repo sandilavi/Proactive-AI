@@ -20,6 +20,7 @@ interface ProactiveAlert {
   mitigationTaskName?: string;
   mitigationTargetDate?: string;
   suggestion?: string;
+  reason?: string;
   totalHours?: number;
   status?: string;
 }
@@ -149,14 +150,14 @@ export default function AgentEngine() {
               }
             } else {
               // Check Persistent Storage if session is fresh
-              // Key includes deadline so a deadline change invalidates the old cache
-              const alertedKeyPrefix = `proactive_alert_${task.id}_${task.deadline ?? ""}_`;
+              // Key is now strictly Task ID based to ensure memory carries across deadline changes
+              const alertedKeyPrefix = `proactive_alert_${task.id}_`;
               const allKeys = typeof window !== "undefined" ? Object.keys(localStorage) : [];
               const taskKeys = allKeys.filter(k => k.startsWith(alertedKeyPrefix));
               
               if (taskKeys.length > 0) {
                 let bestPreviousRank = 99;
-                let bestPrevData: { alertedAt?: number; displayTime?: string } | null = null;
+                let bestPrevData: { alertedAt?: number; displayTime?: string, originalUrgency?: ProactiveAlert["urgency"] } | null = null;
                 
                 taskKeys.forEach(k => {
                   const levelStr = k.replace(alertedKeyPrefix, "");
@@ -170,6 +171,7 @@ export default function AgentEngine() {
                   }
                 });
 
+                // Rule: Only notify if current urgency is STRICTLY more critical than anything seen before
                 if (urgencyRank[currentUrgency] < bestPreviousRank) {
                   isFreshAlert = true;
                 } else if (bestPrevData) {
@@ -184,8 +186,7 @@ export default function AgentEngine() {
             }
 
             if (isFreshAlert) {
-               // Include deadline in key so stale cache is busted when deadline changes
-               const alertedKey = `proactive_alert_${task.id}_${task.deadline ?? ""}_${currentUrgency}`;
+               const alertedKey = `proactive_alert_${task.id}_${currentUrgency}`;
                const alreadyFreshInSession = prevToasts.some(t => t.taskId === task.id && t.urgency === urgency);
                 if (!alreadyFreshInSession) {
                   const urgentNotificationKey = `${task.id}-${urgency}`;
@@ -247,8 +248,12 @@ export default function AgentEngine() {
             const minutes = (Math.abs(offsetMinutes) % 60).toString().padStart(2, '0');
             const userOffset = `${sign}${hours}:${minutes}`;
 
-            // Sync: Load persistent durations from local vault.
-            const savedEstimates = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("proactive_task_estimates") || "{}") : {};
+            // Sync: Load persistent durations from local vault (v2 with grace period support)
+            const v2Vault = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("proactive_task_estimates_v2") || "{}") : {};
+            const savedEstimates: Record<string, number> = {};
+            Object.entries(v2Vault).forEach(([key, data]: [string, any]) => {
+              savedEstimates[key] = data.value || data; // Handle both v1 and v2 migration
+            });
 
             const report = await getCapacityInsights(freshTasks, userOffset, savedEstimates);
             if (report && report.insights && report.overallSummary) {
@@ -256,8 +261,12 @@ export default function AgentEngine() {
                 const updatedEstimates = { ...savedEstimates };
                 report.insights.forEach(day => {
                    day.taskInsights?.forEach(t => {
-                     const task = freshTasks.find(ft => ft.name === t.name);
-                     if (task) updatedEstimates[`${task.id}-${task.name}`] = t.estimatedHours;
+                     // ATOMIC FIX: Always use the stable ID as the primary key to prevent re-estimation jitter
+                     if (t.id) {
+                       updatedEstimates[t.id] = t.estimatedHours;
+                     } 
+                     // Legacy/Fuzzy Fallback: also save by name for robustness
+                     updatedEstimates[t.name] = t.estimatedHours;
                    });
                 });
                 if (typeof window !== "undefined") {
@@ -272,7 +281,7 @@ export default function AgentEngine() {
 
                 // Add capacity-specific insights
                 const capacityAlerts: ProactiveAlert[] = results.map(i => {
-                    const alert = {
+                    return {
                         id: `capacity-${i.date}`,
                         taskId: `capacity-${i.date}`,
                         taskName: i.status === "OVERLOADED" ? `Overload on ${i.date}` : `Heavy Workload on ${i.date}`,
@@ -283,26 +292,90 @@ export default function AgentEngine() {
                         alertedAt: Date.now(),
                         read: false,
                         suggestion: i.suggestion,
+                        reason: i.reason,
                         totalHours: i.totalHours,
                         status: i.totalHours > 12 ? "OVERLOADED" : i.totalHours > 9 ? "BUSY" : i.status,
                         mitigationSuggestion: i.suggestion,
                         mitigationTaskName: i.mitigationTaskName,
                         mitigationTargetDate: i.mitigationTargetDate,
                     } as ProactiveAlert;
-
-                    // Trigger OS Notification for NEW capacity alerts
-                    const notificationKey = `${alert.id}-${alert.urgency}-${i.suggestion?.slice(0, 50)}`;
-                    if (!notifiedCapacityRef.current.has(notificationKey)) {
-                        fireOsNotification(alert);
-                        notifiedCapacityRef.current.add(notificationKey);
-                    }
-
-                    return alert;
                 }).filter(a => {
                     if (!a.mitigationTaskName || !a.mitigationTargetDate) return true;
                     const key = `${a.mitigationTaskName}|${a.date}|${a.mitigationTargetDate}`;
                     return !rejected.includes(key);
                 });
+
+                // Trigger OS Notification ONLY for alerts that survived the filter AND have a suggestion
+                const persistedNotified = JSON.parse(localStorage.getItem("proactive_notified_ledger") || "[]");
+                const newNotified = [...persistedNotified];
+                let ledgerChanged = false;
+
+                capacityAlerts.forEach(alert => {
+                    const hasSugg = alert.suggestion && alert.suggestion.length > 5;
+                    const notificationKey = `${alert.id}-${alert.urgency}-${alert.suggestion?.slice(0, 50)}`;
+                    
+                    if (hasSugg && !newNotified.includes(notificationKey)) {
+                        // Humanize any ISO dates in the suggestion for the OS notification
+                        const toHumanDate = (iso: string) => {
+                          const d = new Date(iso);
+                          if (isNaN(d.getTime())) return iso;
+                          return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+                        };
+                        const cleanSugg = (alert.suggestion || "").replace(/\d{4}-\d{2}-\d{2}/g, (match) => toHumanDate(match));
+
+                        fireOsNotification({
+                          ...alert,
+                          taskName: "ProActiveAI Intelligence",
+                          suggestion: cleanSugg
+                        });
+                        
+                        newNotified.push(notificationKey);
+                        ledgerChanged = true;
+                    }
+                });
+
+                if (ledgerChanged) {
+                    // Keep ledger lean (last 50 keys)
+                    localStorage.setItem("proactive_notified_ledger", JSON.stringify(newNotified.slice(-50)));
+                }
+
+                // --- GARBAGE COLLECTION ---
+                // We use a "Grace Period" (24h) to prevent re-calculation if a task is briefly marked Done and then reverted.
+                const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+                const activeTaskIds = new Set(freshTasks.map(t => t.id));
+                const activeTaskNames = new Set(freshTasks.map(t => t.name));
+                
+                // Estimates are now stored as: { [idOrName]: { value: number, lastSeen: number } }
+                const currentVault = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("proactive_task_estimates_v2") || "{}") : {};
+                const updatedVault: Record<string, { value: number, lastSeen: number }> = { ...currentVault };
+
+                // 1. Sync current estimates into the vault with fresh timestamps
+                Object.entries(updatedEstimates).forEach(([key, val]) => {
+                  updatedVault[key] = { value: val as number, lastSeen: Date.now() };
+                });
+
+                // 2. Cleanup: Only remove if lastSeen > 24 hours ago
+                const cleanedVault: Record<string, { value: number, lastSeen: number }> = {};
+                Object.entries(updatedVault).forEach(([key, data]) => {
+                  const isStillActive = activeTaskIds.has(key) || activeTaskNames.has(key);
+                  const isRecentlySeen = (Date.now() - data.lastSeen) < ONE_DAY_MS;
+                  
+                  if (isStillActive || isRecentlySeen) {
+                    cleanedVault[key] = data;
+                  }
+                });
+                localStorage.setItem("proactive_task_estimates_v2", JSON.stringify(cleanedVault));
+
+                // Legacy cleanup: remove old v1 format
+                localStorage.removeItem("proactive_task_estimates");
+
+                // Purge rejected moves for dates in the past (No grace period needed for past dates)
+                const cleanedRejections = rejected.filter((key: string) => {
+                  const parts = key.split('|');
+                  const datePart = parts[1] || ""; // Format: taskName|overloadDate|targetDate
+                  return datePart >= today; 
+                });
+                localStorage.setItem("proactive_rejected_moves", JSON.stringify(cleanedRejections));
 
                 localStorage.setItem("proactive_capacity_fingerprint", currentCapacityFingerprint);
                 

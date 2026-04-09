@@ -49,6 +49,7 @@ export interface CapacityInsight {
   status: "SAFE" | "BUSY" | "OVERLOADED";
   taskInsights?: Array<{ id: string; name: string; estimatedHours: number }>;
   suggestion?: string;
+  reason?: string;
   // Structured fields for the Accept/Reject action buttons
   mitigationTaskName?: string;   // The exact task name to move
   mitigationTargetDate?: string; // ISO date string "YYYY-MM-DD" to move it to
@@ -660,9 +661,18 @@ export async function getCapacityInsights(
 
   if (Date.now() < rateLimitCooldownUntil) {
     const remainingSeconds = Math.ceil((rateLimitCooldownUntil - Date.now()) / 1000);
+    // Even when rate limited, we MUST return the known estimations so the UI doesn't show 0.0h
+    const estimationsRecord: Record<string, number> = {};
+    taskEstimationCache.forEach((hours, key) => {
+      const namePart = key.split('-').slice(1).join('-');
+      estimationsRecord[namePart || key] = hours;
+    });
+
     return {
       insights: [],
-      overallSummary: `AI Rate Limit Cooldown. The system is resting to prevent quota errors. Please wait ${remainingSeconds}s...`,
+      overallSummary: `Groq AI Rate Limit hit! Pausing analysis for ${remainingSeconds}s... (Event: ${Date.now()})`,
+      knownEstimations: estimationsRecord,
+      thinkContext: "I have paused my active analysis due to a Groq API Rate Limit, but I am still maintaining your existing task estimations from my memory."
     };
   }
 
@@ -730,196 +740,238 @@ async function runCapacityAnalysis(_fingerprint: string, tasks: NotionTask[], us
   const localNow = new Date(new Date().getTime() + offsetMs);
   const today = localNow.toISOString().split("T")[0];
 
-  // Temporal Awareness: Calculate remaining hours in the current day
+  // Temporal Awareness
   const endOfDay = new Date(localNow);
   endOfDay.setHours(23, 59, 59, 999);
-  const remainingHoursInDay = Math.max(0, (endOfDay.getTime() - localNow.getTime()) / 3600000).toFixed(2);
+  const remainingHoursInDay = parseFloat(Math.max(0, (endOfDay.getTime() - localNow.getTime()) / 3600000).toFixed(2));
 
-  const taskContext = tasks
-    .filter(t => t.status?.toLowerCase() !== "done")
-    .map(t => {
-      // Resilient Lookup: Try exact ID-Name first, fallback to Name-only if task was recreated
-      let cached = taskEstimationCache.get(`${t.id}-${t.name}`);
-      if (cached === undefined) {
-        // Find any entry in the cache that matches this exact task name
-        for (const [key, val] of taskEstimationCache.entries()) {
-          if (key.endsWith(`-${t.name}`)) {
-            cached = val;
-            break;
-          }
+  let thinkContext = "";
+  const activeTasks = tasks.filter(t => t.status?.toLowerCase() !== "done" && t.deadline && t.deadline !== 'No Deadline');
+
+  // --- PHASE 1: MICRO-AGENT (TASK ESTIMATION) ---
+  // Only ask AI to estimate new/unrecognized tasks
+  const missingEstimations = activeTasks.filter(t => {
+    // ID lookup
+    let cached = taskEstimationCache.get(t.id);
+
+    // Name lookup
+    if (cached === undefined) {
+      cached = taskEstimationCache.get(t.name.trim());
+    }
+
+    // Fuzzy lookup
+    if (cached === undefined) {
+      for (const [key, val] of taskEstimationCache.entries()) {
+        const cleanKey = key.split('-').pop() || key;
+        if (cleanKey.toLowerCase().trim() === t.name.toLowerCase().trim()) {
+          cached = val;
+          break;
         }
       }
-      const memTag = cached ? ` [Estimation Memory: ${cached.toFixed(1)}h]` : "";
+    }
+    return cached === undefined;
+  });
 
-      // Overdue Labeling: Help the AI identify tasks past their deadline
-      const isOverdue = t.deadline && t.deadline !== "No Deadline" && t.deadline < today;
-      const overdueTag = isOverdue ? " (OVERDUE)" : "";
+  if (missingEstimations.length > 0) {
+    const estPrompt = missingEstimations.map(t => `- ID: "${t.id}", Name: "${t.name}"`).join("\n");
+    try {
+      const estResponse = await groq.chat.completions.create({
+        model: GROQ_MODEL,
+        temperature: 0,
+        max_tokens: 1500,
+        messages: [
+          {
+            role: "system",
+            content: `You are an Estimation Agent. Estimate hours (0.5 to 8.0) for each task. Output strict JSON. Format: { "estimations": [{ "id": "task_id", "estimatedHours": 2.5 }] }`
+          },
+          { role: "user", content: `TASKS TO ESTIMATE:\n${estPrompt}` }
+        ]
+      });
+      const rawEst = estResponse.choices[0]?.message?.content || "";
+      const estData = extractJSON<{ estimations: { id: string, name?: string, estimatedHours: number }[] }>(rawEst);
+      if (estData && estData.estimations) {
+        estData.estimations.forEach(est => {
+          // SANITY CLEANING: AI sometimes adds quotes or spaces to IDs
+          const cleanEstId = String(est.id).trim().replace(/['"]/g, '');
+          const matched = missingEstimations.find(t => {
+            const cleanTaskId = String(t.id).trim().replace(/['"]/g, '');
+            return cleanTaskId === cleanEstId || t.name.trim().toLowerCase() === String(est.name || "").trim().toLowerCase();
+          });
 
-      return `- ID: "${t.id}", Name: "${t.name}", Status: "${t.status}", Deadline: "${t.deadline}"${overdueTag}${memTag}`;
-    })
-    .join("\n");
-
-  // 3. Provide a Calendar Map so the AI knows which days are truly empty
-  const calendarMap = [];
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(localNow);
-    d.setDate(d.getDate() + i);
-    calendarMap.push(d.toISOString().split('T')[0]);
+          if (matched && est.estimatedHours > 0) {
+            taskEstimationCache.set(matched.id, est.estimatedHours);
+            taskEstimationCache.set(matched.name.trim(), est.estimatedHours);
+          }
+        });
+      }
+    } catch (e) { console.error("Estimation Model Failed:", e); }
   }
-  const calendarContext = `AVAILABLE DATES (Next 7 Days):\n${calendarMap.join(", ")}`;
 
-
-  if (!taskContext) {
-    return { insights: [], overallSummary: "Your schedule is clear!" };
-  }
-
-  const runAnalysis = async (): Promise<string> => {
-    const response = await groq.chat.completions.create({
-      model: GROQ_MODEL,
-      temperature: 0,
-      max_tokens: 4000,
-      messages: [
-        {
-          role: "system",
-          content: `You are a Capacity Planning Agent. Today is ${today}. 
-            Output a Strategic Intelligence Report in strict JSON.
-            
-            CORE CONSTRAINTS:
-            - DATA FIDELITY: Group tasks strictly by current deadline. DO NOT move tasks between dates in the JSON.
-            - ESTIMATION: Use [Estimation Memory: X.Xh] if present. Else, estimate 0.5-8h. Never 0.0h.
-            - THRESHOLDS: SAFE (<9h), BUSY (9-12h), OVERLOADED (>12h).
-            - TERMINOLOGY: Use "overloaded/relocate" ONLY for days >12h. Use "balancing/clearing" for BUSY days.
-            - ADVISORY TONE: Use "I suggest moving", "Consider shifting". NEVER say "I have moved/relocated".
-            
-            STRATEGIC RULES:
-            - TEMPORAL REALITY: Today is ${today} with ${remainingHoursInDay}h remaining.
-            - PROACTIVE RULE: Prioritize moving tasks to EARLIER safe dates (including Today) before future dates.
-            - IMPORTANCE-FIRST: Always suggest moving the LEAST IMPORTANT (lowest priority) task first.
-            - MITIGATION: If BUSY/OVERLOADED, suggest moving ONE task to the NEAREST safe date.
-            
-            FORMATTING:
-            - Exact names for "mitigationTaskName".
-            - YYYY-MM-DD for "mitigationTargetDate".
-            - Suggestion text: Human, proactive tone. Single quotes ONLY inside text.
-
-            OUTPUT SCHEMA:
-            {
-              "insights": [{
-                "date": "YYYY-MM-DD",
-                "totalHours": 0.0,
-                "status": "SAFE|BUSY|OVERLOADED",
-                "taskInsights": [{ "id": "task_id", "name": "Exact Name", "estimatedHours": 0.0 }],
-                "suggestion": "string",
-                "mitigationTaskName": "string",
-                "mitigationTargetDate": "YYYY-MM-DD"
-              }],
-              "overallSummary": "string"
-            }`
-        },
-        { role: "user", content: `${calendarContext}\n\nREMAINING TIME TODAY: ${remainingHoursInDay} hours\n\nExisting Tasks:\n${taskContext}` }
-      ]
-    });
-    return response.choices[0]?.message?.content || "";
+  // --- PHASE 2: TYPESCRIPT CALCULATION ENGINE ---
+  const normalizeDate = (deadline: string): string => {
+    const parsed = new Date(deadline);
+    if (!isNaN(parsed.getTime())) {
+      return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`;
+    }
+    return deadline.split('T')[0];
   };
 
-  // Retry Logic: If first attempt fails to parse, retry once
-  let raw = "";
-  try {
-    raw = await runAnalysis();
-  } catch (error: any) {
-    if (error?.status === 429 || error?.message?.includes("Rate limit")) {
-      rateLimitCooldownUntil = Date.now() + 60000;
-      // Injecting timestamp ensures React sees this as a 'new' status string and re-triggers the retry timer
-      return { insights: [], overallSummary: `Groq AI Rate Limit hit! Pausing analysis for 60 seconds to recover tokens... (Event: ${Date.now()})` };
+  const insightsMap = new Map<string, any>();
+  insightsMap.set(today, { date: today, totalHours: 0, status: "SAFE", taskInsights: [] }); // Guarantee Today exists
+
+  activeTasks.forEach(t => {
+    const d = normalizeDate(t.deadline || today);
+    if (!insightsMap.has(d)) insightsMap.set(d, { date: d, totalHours: 0, status: "SAFE", taskInsights: [] });
+
+    const day = insightsMap.get(d);
+    const idKey = t.id;
+    const nameKey = t.name.trim();
+
+    // Look up by ID (highest precision)
+    let est = taskEstimationCache.get(idKey);
+
+    // Fallback to Name (fuzzy matching)
+    if (est === undefined) {
+      est = taskEstimationCache.get(nameKey);
     }
-    console.error("Groq API Error running Capacity Analysis:", error);
-    return { insights: [], overallSummary: "API Error: Please wait a minute before analyzing capacity again." };
-  }
-  const thinkMatch = raw.match(/<think>([\s\S]*?)<\/think>/);
-  let thinkContext = thinkMatch ? thinkMatch[1].trim() : "";
 
-  const report = extractJSON<CapacityReport>(raw);
-
-  if (report && report.insights) {
-    // Logic: Enforce persistent durations and recalibrate mathematical totals.
-    report.insights = report.insights.map(day => {
-      const insights = day.taskInsights;
-      if (insights && insights.length > 0) {
-        // Truth Guard: Ensure AI hasn't pre-emptively moved the task in its report
-        const filteredInsights = insights.filter(tInsight => {
-          const matchedOriginal = tasks.find(ot => ot.id === tInsight.id || ot.name === tInsight.name);
-          if (!matchedOriginal) return true;
-
-          const normalize = (d: string) => d.includes('T') ? d.split('T')[0] : new Date(d).toISOString().split('T')[0];
-          return normalize(matchedOriginal.deadline || "") === day.date;
-        });
-
-        filteredInsights.forEach(tInsight => {
-          const matchedOriginal = tasks.find(ot => ot.id === tInsight.id || ot.name === tInsight.name);
-          if (matchedOriginal) {
-            const cachedKey = `${matchedOriginal.id}-${matchedOriginal.name}`;
-            const lockedEstimate = taskEstimationCache.get(cachedKey);
-            if (lockedEstimate !== undefined) {
-              tInsight.estimatedHours = lockedEstimate;
-            } else if (tInsight.estimatedHours && tInsight.estimatedHours > 0) {
-              taskEstimationCache.set(cachedKey, tInsight.estimatedHours);
-            }
-          }
-          // Universal Safety Net: Catch ALL 0H tasks, even those with name mismatches
-          if (!tInsight.estimatedHours || tInsight.estimatedHours <= 0) {
-            tInsight.estimatedHours = 2.0;
-          }
-        });
-
-        const actualTotal = filteredInsights.reduce((sum, task) => sum + (task.estimatedHours || 0), 0);
-        return {
-          ...day,
-          taskInsights: filteredInsights,
-          totalHours: actualTotal,
-          status: actualTotal >= 12 ? "OVERLOADED" : actualTotal >= 9 ? "BUSY" : "SAFE"
-        };
-      }
-      return day;
-    });
-
-    // Server-Side Guard: Override invalid AI dates (Past dates OR same-day moves)
-    report.insights.forEach(day => {
-      const isSameDayMove = day.mitigationTargetDate === day.date;
-      const isPastMove = day.mitigationTargetDate && day.mitigationTargetDate < today;
-
-      if (day.mitigationTargetDate && (isSameDayMove || isPastMove)) {
-        // High-Trust Fallback: Target "Today" (localNow) first to balance near-term gaps.
-        const fallbackStr = today;
-
-        // Redirect to safe target
-        day.mitigationTargetDate = fallbackStr;
-
-        // Final Fix: Sync the text to match our corrected date
-        if (day.suggestion) {
-          day.suggestion = day.suggestion.replace(/\d{4}-\d{2}-\d{2}/g, fallbackStr);
+    if (est === undefined) {
+      for (const [key, val] of taskEstimationCache.entries()) {
+        const cleanKey = key.split('-').pop() || key;
+        if (cleanKey.toLowerCase().trim() === nameKey.toLowerCase()) {
+          est = val;
+          break;
         }
       }
-    });
-    const overloads = report.insights.filter(i => i.totalHours > 10);
-    if (overloads.length > 0) {
-      const topOverload = Math.max(...overloads.map(o => o.totalHours)).toFixed(1);
-      const numberRegex = new RegExp(`(\\d+\\.\\d+|\\d+)(?=\\s*h|\\s*hours?)`, 'gi');
-      report.overallSummary = report.overallSummary.replace(numberRegex, () => `${topOverload}`);
     }
+    // Hard fallback if estimation failed
+    if (!est || est <= 0) est = 1.5;
+
+    day.taskInsights.push({ id: t.id, name: t.name, estimatedHours: est });
+    day.totalHours += est;
+  });
+
+  const insightsArray = Array.from(insightsMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+
+  // --- PHASE 3: AGENTIC STATUS & MITIGATION ---
+  // Rules: 12+ is OVERLOADED, 9+ is BUSY. Stable thresholds prevent jitter.
+  insightsArray.forEach(day => {
+    if (day.totalHours >= 12) {
+      day.status = "OVERLOADED";
+    } else if (day.totalHours >= 9) {
+      day.status = "BUSY";
+    } else {
+      day.status = "SAFE";
+    }
+  });
+
+  // --- PHASE 3: MICRO-AGENT (MITIGATION CONSULTANT) ---
+  let overallSummary = "Your schedule is perfectly balanced! No overloads detected.";
+  const overloadedDays = insightsArray.filter(i => i.status === "OVERLOADED");
+
+  if (overloadedDays.length > 0) {
+    overallSummary = "I detect some overloaded days. Let's proactively rebalance your workload.";
+
+    const calendarMap = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(localNow);
+      d.setDate(d.getDate() + i);
+      calendarMap.push(d.toISOString().split('T')[0]);
+    }
+
+    const mitigationPrompt = overloadedDays.map(d => JSON.stringify(d)).join("\n");
+
+    try {
+      const mitResponse = await groq.chat.completions.create({
+        model: GROQ_MODEL,
+        temperature: 0,
+        max_tokens: 3000,
+        messages: [
+          {
+            role: "system",
+            content: `You are a Capacity Mitigation Consultant.
+            CORE CONSTRAINTS:
+            - STRATEGY: Prioritize moving tasks from OVERLOADED days to EARLIER safe dates (including Today) before suggesting future dates.
+            - IMPORTANCE-FIRST: Suggest moving the LEAST IMPORTANT tasks first.
+            - OUTPUT: Strict JSON schema.
+            
+            SCHEMA:
+            {
+              "overallSummary": "A concise, conversational summary of your RECOMMENDATIONS (e.g., 'To reduce the overload on April 8, I suggest moving the least urgent tasks...'). NEVER use active words like 'I am moving' or 'I have moved' as you are only a consultant giving suggestions.",
+              "mitigations": [{ 
+                "date": "YYYY-MM-DD", 
+                "suggestion": "A single, consultative sentence using ONLY Month and Day (e.g., 'April 10'). NEVER INCLUDE THE YEAR: 'I am suggesting moving [Task] to [Formatted Date] to help reduce the heavy load on [Formatted Date].'",
+                "mitigationTaskName": "Exact task name", 
+                "mitigationTargetDate": "YYYY-MM-DD" 
+              }]
+            }
+            
+            CONSULTANT RULE: You are an advisor, not an executor. Use words like 'suggest', 'recommend', 'propose'. DO NOT claim to have moved or changed anything yourself.
+            
+            PRIORITY RULE: Always propose moves to the EARLIEST next day that has remaining capacity under 9 hours. Do not skip available slots.`
+          },
+          { role: "user", content: `CALENDAR:\n${calendarMap.join(", ")}\n\nOVERLOADED DAYS TO FIX:\n${mitigationPrompt}` }
+        ]
+      });
+      const rawMit = mitResponse.choices[0]?.message?.content || "";
+      const thinkMatch = rawMit.match(/<think>([\s\S]*?)<\/think>/);
+      if (thinkMatch) thinkContext = thinkMatch[1].trim();
+
+      const mitData = extractJSON<{ mitigations: any[], overallSummary: string }>(rawMit);
+
+      // Helper: Convert YYYY-MM-DD to "Month Day" for suggestion cleanup if AI missed it
+      const toHumanDate = (iso: string) => {
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return iso;
+        return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+      };
+
+      if (mitData) {
+        if (mitData.overallSummary) overallSummary = mitData.overallSummary.replace(/,?\s*\d{4}/g, "");
+        if (mitData.mitigations) {
+          mitData.mitigations.forEach(mit => {
+            const targetDay = insightsArray.find(i => i.date === mit.date);
+            if (targetDay) {
+              const isPastMove = mit.mitigationTargetDate < today;
+              const isSameDay = mit.mitigationTargetDate === mit.date;
+
+              // Clean up suggestion: Replace any ISO strings with human dates AND strip any accidental years
+              let cleanSuggestion = (mit.suggestion || "").replace(/,?\s*\d{4}/g, "");
+              const isoRegex = /\d{4}-\d{2}-\d{2}/g;
+              cleanSuggestion = cleanSuggestion.replace(isoRegex, (match: string) => toHumanDate(match));
+
+              if (isPastMove || isSameDay) { // Fallback Guard
+                targetDay.mitigationTargetDate = today;
+                targetDay.suggestion = cleanSuggestion.replace(toHumanDate(mit.mitigationTargetDate), "Today");
+              } else {
+                targetDay.suggestion = cleanSuggestion;
+                targetDay.mitigationTargetDate = mit.mitigationTargetDate;
+              }
+              targetDay.mitigationTaskName = mit.mitigationTaskName;
+            }
+          });
+        }
+      }
+    } catch (e) { console.error("Mitigation Consultant Failed:", e); }
+
+    // Summary normalization logic
+    const topOverload = Math.max(...overloadedDays.map(o => o.totalHours)).toFixed(1);
+    const numberRegex = new RegExp(`(\\d+\\.\\d+|\\d+)(?=\\s*h|\\s*hours?)`, 'gi');
+    overallSummary = overallSummary.replace(numberRegex, () => `${topOverload}`);
   }
 
-  const finalThinkContext = thinkContext || (report as any)?.thinkContext || "";
-
-  // Extract task name from ID-Name cache key for easier client-side lookup
+  // --- REPORT PACKAGING ---
   const estimationsRecord: Record<string, number> = {};
   taskEstimationCache.forEach((hours, key) => {
     const namePart = key.split('-').slice(1).join('-');
     estimationsRecord[namePart || key] = hours;
   });
-
-  return report
-    ? { ...report, thinkContext: finalThinkContext, knownEstimations: estimationsRecord }
-    : { insights: [], overallSummary: "Could not generate report.", thinkContext: finalThinkContext };
+  return {
+    insights: insightsArray,
+    overallSummary,
+    knownEstimations: estimationsRecord,
+    thinkContext
+  };
 }
 
 

@@ -16,6 +16,7 @@ interface StrategyViewProps {
 }
 
 export default function StrategyView({ tasks, initialReport }: StrategyViewProps) {
+  const [syncedTasks, setSyncedTasks] = useState<NotionTask[]>(tasks || []);
   const [report, setReport] = useState<CapacityReport | null>(initialReport || null);
   const [loading, setLoading] = useState(!report);
   const [thinkOpen, setThinkOpen] = useState(false);
@@ -46,12 +47,6 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
 
   useEffect(() => {
     const fetchInsights = async () => {
-      if (report && !loading) {
-         // Keep existing report while updating in background to avoid flicker
-      } else {
-         setLoading(true);
-      }
-
       try {
         const now = new Date();
         const offsetMinutes = -now.getTimezoneOffset();
@@ -60,8 +55,10 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
         const minutes = (Math.abs(offsetMinutes) % 60).toString().padStart(2, '0');
         const userOffset = `${sign}${hours}:${minutes}`;
 
+        // Fetch FRESH tasks directly to keep the UI from staggering
         const freshTasks = await fetchNotionTasks();
         if (!freshTasks) return;
+        setSyncedTasks(freshTasks); // ATOMIC SYNC: Update the UI tasks immediately
 
         // Smart Consistency Check
         const currentFingerprint = [...freshTasks]
@@ -77,8 +74,14 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
           return;
         }
 
-        // Load persistent estimation memory from LocalStorage
-        const savedEstimates = JSON.parse(localStorage.getItem("proactive_task_estimates") || "{}");
+        if (!report) setLoading(true);
+
+        // Load persistent estimation memory (v2 ID-first format)
+        const v2Vault = JSON.parse(localStorage.getItem("proactive_task_estimates_v2") || "{}");
+        const savedEstimates: Record<string, number> = {};
+        Object.entries(v2Vault).forEach(([key, data]: [string, any]) => {
+          savedEstimates[key] = data.value || data;
+        });
         
         const data = await getCapacityInsights(freshTasks, userOffset, savedEstimates);
         
@@ -88,52 +91,22 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
           localStorage.setItem("proactive_capacity_fingerprint_strategy", currentFingerprint);
           localStorage.setItem("proactive_capacity_last_day_strategy", todayStr);
           localStorage.setItem("proactive_capacity_full_report", JSON.stringify(data));
+          
+          // Legacy Sync: Update capacity alerts for the global hub
+          const alerts = data.insights.filter(i => i.status === "BUSY" || i.status === "OVERLOADED");
+          localStorage.setItem("proactive_capacity_alerts", JSON.stringify({
+            alerts,
+            summary: data.overallSummary,
+            deadlineFingerprint: currentFingerprint,
+            updatedAt: Date.now()
+          }));
+          window.dispatchEvent(new Event('capacity-alerts-updated'));
         } else if (isRateLimitResponse) {
-          // CRITICAL: Clear fingerprints so the retry timer's stale closure
-          // cannot match them and skip the AI call
           localStorage.removeItem("proactive_capacity_fingerprint_strategy");
           localStorage.removeItem("proactive_capacity_last_day_strategy");
         }
         
         setReport(data);
-
-        // Save any NEWLY generated estimates back to LocalStorage
-        const updatedEstimates = { ...savedEstimates };
-        if (data?.insights) {
-          data.insights.forEach(day => {
-            day.taskInsights?.forEach(t => {
-              const task = freshTasks.find(ft => ft.name === t.name);
-              if (task) updatedEstimates[`${task.id}-${task.name}`] = t.estimatedHours;
-            });
-          });
-        }
-        localStorage.setItem("proactive_task_estimates", JSON.stringify(updatedEstimates));
-
-        if (typeof window !== "undefined" && data && Array.isArray(data.insights)) {
-          const alerts = data.insights.filter(i => i.status === "BUSY" || i.status === "OVERLOADED");
-          
-          const lastStored = JSON.parse(localStorage.getItem("proactive_capacity_alerts") || "{}");
-          const lastAlertsStr = JSON.stringify(lastStored.alerts || []);
-          const newAlertsStr = JSON.stringify(alerts);
-          const hasStructuralChange = lastAlertsStr !== newAlertsStr;
-
-          // Force refresh if any task deadline changed — catches stale suggestion text
-          // even when the alert structure looks identical (same date/status, different deadline)
-          const currentDeadlineFingerprint = freshTasks
-            .filter(t => t.status?.toLowerCase() !== "done")
-            .map(t => `${t.id}:${t.deadline ?? ""}`)
-            .sort()
-            .join("|");
-          const deadlineChanged = currentDeadlineFingerprint !== (lastStored.deadlineFingerprint || "");
-
-          localStorage.setItem("proactive_capacity_alerts", JSON.stringify({
-            alerts,
-            summary: data.overallSummary,
-            deadlineFingerprint: currentDeadlineFingerprint,
-            updatedAt: (hasStructuralChange || deadlineChanged) ? Date.now() : (lastStored.updatedAt || Date.now())
-          }));
-          window.dispatchEvent(new Event('capacity-alerts-updated'));
-        }
       } catch (err) {
         console.error("Strategy Insight Error:", err);
       } finally {
@@ -192,7 +165,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
     );
   }
 
-  const activeTasks = (tasks || []).filter(t => t.status?.toLowerCase() !== "done");
+  const activeTasks = (syncedTasks || []).filter(t => t.status?.toLowerCase() !== "done");
 
    return (
     <div className="space-y-10 animate-in fade-in zoom-in-95 duration-1000">

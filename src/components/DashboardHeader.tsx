@@ -17,6 +17,7 @@ type AgentAlert = {
     mitigationSuggestion?: string;
     mitigationTaskName?: string;
     mitigationTargetDate?: string;
+    reason?: string;
 };
 
 const getFormattedAlertTime = (ms: number | undefined, timeString: string) => {
@@ -148,7 +149,7 @@ export default function DashboardHeader() {
       if (stored) {
         try {
           const parsed = JSON.parse(stored);
-          const validAlerts = (parsed.alerts || []).filter((a: any) => (a.totalHours || 0) > 0 && a.date);
+          const validAlerts = (parsed.alerts || []).filter((a: any) => a.date && (a.suggestion || a.mitigationSuggestion));
           parsed.alerts = validAlerts;
 
           // Filter out persistently rejected suggestions
