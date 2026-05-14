@@ -8,7 +8,7 @@ interface NotionPage {
   properties: Record<string, any>;
 }
 
-// 1. Discover databases in real-time
+// Discover databases in real-time
 // Removing unstable_cache for zero-refresh development experience
 export async function discoverDatabases(): Promise<NotionDatabase[]> {
   return rawDiscoverDatabases();
@@ -84,7 +84,7 @@ export const fetchNotionTasks = cache(
   }
 );
 
-// CREATE a task
+// Create a task
 export async function createNotionTask(title: string, statusName: string, date?: string, databaseId?: string) {
   const dbs = await discoverDatabases();
   const targetDb = databaseId ? dbs.find(db => db.id === databaseId) : dbs[0];
@@ -116,7 +116,7 @@ export async function createNotionTask(title: string, statusName: string, date?:
   }
 }
 
-// UPDATE a task
+// Update a task
 export async function updateNotionTask(taskId: string, statusName?: string, date?: string, propNames?: { status: string; date: string }, propTypes?: { status: "status" | "select" }) {
   try {
     let statusProp = propNames?.status || "Status";
@@ -154,7 +154,7 @@ export async function updateNotionTask(taskId: string, statusName?: string, date
   }
 }
 
-// DELETE a task
+// Delete a task
 export async function deleteNotionTask(taskId: string) {
   try {
     const response = await notion.pages.update({
@@ -171,7 +171,7 @@ export async function deleteNotionTask(taskId: string) {
   }
 }
 
-// BATCH CREATE tasks from Horizon
+// Batch create tasks from Horizon
 export async function batchCreateNotionTasks(tasks: { title: string; date: string }[]) {
   const dbs = await discoverDatabases();
   const targetDb = dbs[0];

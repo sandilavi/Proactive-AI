@@ -10,7 +10,7 @@ export default function Loading() {
       </div>
 
       {/* Main Input Area Skeleton */}
-      <div className="h-48 w-full bg-slate-200 rounded-[2.5rem] shadow-sm" />
+      <div className="h-48 w-full bg-slate-200 rounded-[2.5rem]" />
     </div>
   );
 }

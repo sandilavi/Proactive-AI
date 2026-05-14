@@ -1,5 +1,5 @@
 import { fetchNotionTasks } from "@/app/actions/notion-actions";
-import { getCapacityInsights } from "@/app/actions/agent-actions";
+import { getCapacityInsights } from "@/app/actions/strategy-actions";
 import StrategyView from "@/components/StrategyView";
 
 export const dynamic = 'force-dynamic';

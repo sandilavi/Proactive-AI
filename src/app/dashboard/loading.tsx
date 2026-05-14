@@ -18,12 +18,12 @@ export default function Loading() {
         </div>
 
         {/* Command Input Skeleton */}
-        <div className="h-64 w-full bg-white/70 border border-slate-100 rounded-[2.5rem] shadow-sm" />
+        <div className="h-64 w-full bg-white/70 border border-slate-100 rounded-[2.5rem]" />
         
         {/* Table Skeleton */}
         <div className="mt-12 space-y-4">
            <div className="h-6 w-32 bg-slate-100 rounded-lg" />
-           <div className="h-96 w-full bg-white border border-slate-50 rounded-[2rem] shadow-sm" />
+           <div className="h-96 w-full bg-white border border-slate-50 rounded-[2rem]" />
         </div>
       </div>
     </div>

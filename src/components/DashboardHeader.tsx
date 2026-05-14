@@ -270,10 +270,10 @@ export default function DashboardHeader() {
             onClick={handleToggleCapacityHub}
             className={`group relative p-3.5 rounded-[1.25rem] transition-all duration-300 border cursor-pointer z-20 hover:scale-105 ${
               capacityHubOpen
-                ? "bg-indigo-600 text-white border-indigo-600 shadow-xl shadow-md ring-4 ring-indigo-50"
+                ? "bg-indigo-600 text-white border-indigo-600 ring-4 ring-indigo-50"
                 : unreadCapacityCount > 0 && capacityData && capacityData.alerts.length > 0
-                ? "bg-white text-indigo-500 border-indigo-100 hover:border-indigo-300 hover:shadow-md shadow-sm"
-                : "bg-white text-slate-400 border-slate-200/60 hover:text-slate-500 hover:border-slate-300 hover:shadow-md"
+                ? "bg-white text-indigo-500 border-indigo-100 hover:border-indigo-300"
+                : "bg-white text-slate-400 border-slate-200/60 hover:text-slate-500 hover:border-slate-300"
             }`}
             title="Strategic intelligence hub"
           >
@@ -281,20 +281,20 @@ export default function DashboardHeader() {
               <Brain size={22} />
             </div>
             {unreadCapacityCount > 0 && capacityData && capacityData.alerts.length > 0 && (
-              <span className="absolute -top-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-black leading-none text-white ring-4 ring-white shadow-sm animate-in zoom-in group-hover:scale-110 transition-transform z-20">
+              <span className="absolute -top-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-black leading-none text-white ring-4 ring-white animate-in zoom-in group-hover:scale-110 transition-transform z-20">
                 {unreadCapacityCount}
               </span>
             )}
           </button>
 
           {capacityHubOpen && (
-            <div className="absolute top-16 right-0 w-[440px] max-h-[calc(100vh-120px)] bg-white border border-slate-100 shadow-[0_45px_100px_-20px_rgba(0,0,0,0.18)] rounded-[2.5rem] overflow-hidden animate-in slide-in-from-top-4 fade-in duration-500 z-50 flex flex-col">
+            <div className="absolute top-16 right-0 w-[440px] max-h-[calc(100vh-120px)] bg-white border border-slate-100 rounded-[2.5rem] overflow-hidden animate-in slide-in-from-top-4 fade-in duration-500 z-50 flex flex-col">
                <div className="p-8 bg-indigo-950 text-white relative overflow-hidden">
                   <div className="absolute top-0 right-0 p-10 opacity-[0.05] pointer-events-none">
                     <Brain size={180} />
                   </div>
                   <div className="relative z-10">
-                    <div className="bg-white/10 backdrop-blur-md px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-[0.2em] border border-white/10 shadow-2xl inline-block">
+                    <div className="bg-white/10 backdrop-blur-md px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-[0.2em] border border-white/10 inline-block">
                       Neural Capacity Hub
                     </div>
                   </div>
@@ -334,7 +334,7 @@ export default function DashboardHeader() {
                         const alertId = alert.date;
 
                         return (
-                          <div key={alertId} className={`p-6 bg-white rounded-[1.75rem] border border-slate-100 shadow-sm transition-all duration-500 hover:shadow-md ${isOverload ? 'border-l-rose-500 border-l-[6px]' : 'border-l-orange-500 border-l-[6px]'}`}>
+                          <div key={alertId} className={`p-6 bg-white rounded-[1.75rem] border border-slate-100 transition-all duration-500 ${isOverload ? 'border-l-rose-500 border-l-[6px]' : 'border-l-orange-500 border-l-[6px]'}`}>
                              <div className="flex items-center justify-between mb-4">
                                 <span className="text-xs font-black text-slate-800 tracking-tight">
                                   {displayDate}
@@ -345,7 +345,7 @@ export default function DashboardHeader() {
                              </div>
 
                            {alert.suggestion && (
-                             <div className={`mt-2 p-5 rounded-[1.5rem] border shadow-sm relative overflow-hidden group/sugg transition-all duration-500 ${isOverload 
+                             <div className={`mt-2 p-5 rounded-[1.5rem] border relative overflow-hidden group/sugg transition-all duration-500 ${isOverload 
                                 ? 'bg-rose-50 border-rose-100' 
                                 : 'bg-indigo-50 border-indigo-100'}`}>
                                 <div className="flex flex-col gap-4 relative z-10">
@@ -378,8 +378,8 @@ export default function DashboardHeader() {
                                           disabled={mitigationStates[alertId] === 'loading'}
                                           className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer active:scale-95
                                             ${isOverload 
-                                              ? 'bg-rose-600 hover:bg-rose-700 text-white disabled:bg-rose-300 shadow-lg shadow-rose-200/50' 
-                                              : 'bg-indigo-600 hover:bg-indigo-700 text-white disabled:bg-indigo-300 shadow-lg shadow-indigo-200/50'}`}
+                                              ? 'bg-rose-600 hover:bg-rose-700 text-white disabled:bg-rose-300' 
+                                              : 'bg-indigo-600 hover:bg-indigo-700 text-white disabled:bg-indigo-300'}`}
                                         >
                                           {mitigationStates[alertId] === 'loading' ? (
                                             <Loader2 size={12} className="animate-spin" />
@@ -445,11 +445,11 @@ export default function DashboardHeader() {
             handleTogglePanel();
             setCapacityHubOpen(false);
           }}
-          className={`relative p-3.5 rounded-[1.25rem] transition-all duration-300 border cursor-pointer group hover:scale-105 z-20 ${
-            showNotificationPanel && activeToasts.length > 0
-              ? "bg-blue-600 text-white border-blue-600 shadow-xl ring-4 ring-blue-50" 
-              : "bg-white text-slate-400 border-slate-200/60 hover:border-slate-300 hover:text-slate-600 hover:shadow-md"
-          }`}
+            className={`relative p-3.5 rounded-[1.25rem] transition-all duration-300 border cursor-pointer group hover:scale-105 z-20 ${
+              showNotificationPanel && activeToasts.length > 0
+                ? "bg-blue-600 text-white border-blue-600 ring-4 ring-blue-50" 
+                : "bg-white text-slate-400 border-slate-200/60 hover:border-slate-300 hover:text-slate-600"
+            }`}
           title={activeToasts.length === 0 ? "No Notifications" : "Notification alerts"}
         >
           <div className="relative z-10 flex items-center justify-center">
@@ -461,14 +461,14 @@ export default function DashboardHeader() {
           </div>
           
           {unreadCount > 0 && (
-            <span className="absolute -top-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-[10px] font-black leading-none text-white ring-4 ring-white shadow-sm animate-in zoom-in group-hover:scale-110 transition-transform z-20">
+            <span className="absolute -top-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-[10px] font-black leading-none text-white ring-4 ring-white animate-in zoom-in group-hover:scale-110 transition-transform z-20">
               {unreadCount}
             </span>
           )}
         </button>
 
         {showNotificationPanel && (
-          <div className="absolute top-16 right-0 w-[420px] max-h-[calc(100vh-120px)] bg-white border border-slate-100 shadow-[0_45px_100px_-20px_rgba(0,0,0,0.18)] rounded-[2rem] overflow-hidden animate-in slide-in-from-top-4 fade-in duration-500 z-50 flex flex-col">
+          <div className="absolute top-16 right-0 w-[420px] max-h-[calc(100vh-120px)] bg-white border border-slate-100 rounded-[2rem] overflow-hidden animate-in slide-in-from-top-4 fade-in duration-500 z-50 flex flex-col">
             <div className="px-6 py-5 border-b border-slate-50 flex items-center justify-between bg-slate-50/30">
               <div className="flex items-center gap-3">
                  <div className="w-6 h-[2px] bg-slate-300 rounded-full"></div>
@@ -503,23 +503,23 @@ export default function DashboardHeader() {
                   
                   // Use pre-defined high-vibrancy styles
                   const cardBg = isNew ? s.newBg : s.bg;
-                  const cardBorder = isNew ? "border-indigo-400/40 shadow-md" : s.border;
+                  const cardBorder = isNew ? "border-indigo-400/40" : s.border;
                   
                   return (
-                    <div key={toast.id} className={`rounded-[1.25rem] border shadow-sm overflow-hidden relative group transition-all duration-300 ${cardBorder} ${cardBg} hover:shadow-md`}>
+                    <div key={toast.id} className={`rounded-[1.25rem] border overflow-hidden relative group transition-all duration-300 ${cardBorder} ${cardBg}`}>
                       <div className="absolute top-0 right-0 p-4 opacity-[0.05] group-hover:opacity-[0.1] transition-opacity pointer-events-none z-0">
                         <BellRing size={80} className={s.iconColor} />
                       </div>
                       
                       <div className="px-5 py-4 flex items-start gap-4 relative z-10 w-full ml-1">
-                        <div className={`p-2.5 rounded-xl bg-white/90 shadow-sm border border-white/40 flex-shrink-0 mt-0.5 ${s.iconColor} ${isNew ? '' : 'opacity-40'}`}>
+                        <div className={`p-2.5 rounded-xl bg-white/90 border border-white/40 flex-shrink-0 mt-0.5 ${s.iconColor} ${isNew ? '' : 'opacity-40'}`}>
                           <BellRing size={16} />
                         </div>
                         
                           <div className={`flex flex-col gap-2 flex-1 min-w-0 pr-4`}>
                             <div className="flex items-center justify-between">
                               <div className={`flex items-center gap-2 ${isNew ? '' : 'opacity-60'}`}>
-                                <span className={`text-[8px] font-black uppercase tracking-[0.2em] px-2 py-1 rounded-md shadow-sm border ${
+                                <span className={`text-[8px] font-black uppercase tracking-[0.2em] px-2 py-1 rounded-md border ${
                                   isNew 
                                     ? `${s.accent} text-white border-transparent` 
                                     : s.badge
@@ -527,7 +527,7 @@ export default function DashboardHeader() {
                                   {s.label}
                                 </span>
                                 {isNew && (
-                                  <span className="text-[7px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-indigo-600 text-white shadow-sm shadow-indigo-200">New</span>
+                                  <span className="text-[7px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-indigo-600 text-white">New</span>
                                 )}
                               </div>
                               <span className={`text-[9px] font-black tabular-nums uppercase tracking-widest ${isNew ? 'bg-white/60' : 'bg-white/40 opacity-50'} px-2 py-0.5 rounded-full border border-white/40 ${s.text}`}>

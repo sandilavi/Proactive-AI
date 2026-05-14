@@ -1,6 +1,6 @@
 "use client";
 import { useState, useTransition, useRef, useEffect, useCallback } from "react";
-import { executeUserPrompt, confirmAction, getAgentSuggestion, NotionTask, AgentSuggestion, AgentResponse } from "@/app/actions/agent-actions";
+import { executeUserPrompt, confirmAction, getAgentSuggestion, NotionTask, AgentSuggestion, AgentResponse } from "@/app/actions/assistant-actions";
 import { fetchNotionTasks, NotionDatabase } from "@/app/actions/notion-actions";
 import { X, Zap, Trash2, AlertTriangle, Check, Bell, BellRing, Clock, Brain, Sparkles, Activity } from "lucide-react";
 
@@ -65,7 +65,7 @@ function formatDeadline(dateStr: string): string {
 function statusBadge(status: string) {
   const label = status || "Pending";
   const s = status.toLowerCase();
-  const base = "inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest whitespace-nowrap shadow-sm border";
+  const base = "inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest whitespace-nowrap border";
   
   if (s === "done") {
     return <span className={`${base} bg-emerald-50 text-emerald-600 border-emerald-100`}>{label}</span>;
@@ -371,7 +371,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
          
          const pStyle = 
            p === "CRITICAL" ? { 
-             card: "bg-rose-950 border-rose-500/40 shadow-rose-900/40", 
+             card: "bg-rose-950 border-rose-500/40", 
              text: "text-rose-400", 
              bg: "bg-rose-500/20",
              border: "border-rose-500/30",
@@ -379,7 +379,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
              gradient: "from-rose-500 to-rose-400" 
            } :
            p === "HIGH"     ? { 
-             card: "bg-orange-950 border-orange-500/40 shadow-orange-900/40", 
+             card: "bg-orange-950 border-orange-500/40", 
              text: "text-orange-400", 
              bg: "bg-orange-500/20",
              border: "border-orange-500/30",
@@ -387,7 +387,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
              gradient: "from-orange-500 to-orange-400" 
            } :
            p === "MEDIUM"   ? { 
-             card: "bg-slate-900 border-blue-500/30 shadow-blue-900/20", 
+             card: "bg-slate-900 border-blue-500/30", 
              text: "text-blue-400", 
              bg: "bg-blue-500/20",
              border: "border-blue-500/30",
@@ -395,7 +395,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
              gradient: "from-blue-500 to-blue-400" 
            } :
            p === "LOW"      ? { 
-             card: "bg-zinc-800 border-zinc-700 shadow-zinc-950/40", 
+             card: "bg-zinc-800 border-zinc-700", 
              text: "text-zinc-500/80", 
              bg: "bg-zinc-500/20",
              border: "border-zinc-500/30",
@@ -403,7 +403,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
              gradient: "from-zinc-500 to-zinc-400" 
            } :
                               { 
-             card: "bg-slate-900 border-purple-500/30 shadow-purple-900/20", 
+             card: "bg-slate-900 border-purple-500/30", 
              text: "text-purple-400", 
              bg: "bg-purple-500/20",
              border: "border-purple-500/30",
@@ -412,7 +412,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
            };
 
          return (
-           <div className={`${pStyle.card} rounded-[3.5rem] p-10 text-white shadow-2xl relative overflow-hidden group animate-in fade-in slide-in-from-top-10 duration-1000 border`}>
+            <div className={`${pStyle.card} rounded-[3.5rem] p-10 text-white shadow-2xl relative overflow-hidden group animate-in fade-in slide-in-from-top-10 duration-1000 border`}>
               {/* Dynamic Glow Overlay */}
               <div className={`absolute inset-0 bg-gradient-to-br ${pStyle.glow} to-transparent opacity-50`}></div>
               {/* Animated Grid Overlay */}
@@ -422,10 +422,10 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
                     <div className="flex flex-col gap-2">
                        <div className="flex items-center gap-3">
-                         <div className={`inline-flex items-center gap-2.5 bg-white/10 backdrop-blur-xl px-5 py-2.5 rounded-full text-[10px] font-black uppercase tracking-[0.3em] border border-white/10 shadow-2xl w-fit`}>
+                          <div className={`inline-flex items-center gap-2.5 bg-white/10 backdrop-blur-xl px-5 py-2.5 rounded-full text-[10px] font-black uppercase tracking-[0.3em] border border-white/10 shadow-2xl w-fit`}>
                             <Sparkles size={14} className={pStyle.text} /> Agentic Insight
                          </div>
-                         <div className={`inline-flex items-center px-4 py-2.5 rounded-full text-[10px] font-black uppercase tracking-[0.2em] border shadow-2xl ${pStyle.bg} ${pStyle.text} ${pStyle.border}`}>
+                          <div className={`inline-flex items-center px-4 py-2.5 rounded-full text-[10px] font-black uppercase tracking-[0.2em] border shadow-2xl ${pStyle.bg} ${pStyle.text} ${pStyle.border}`}>
                             {p}
                          </div>
                        </div>
@@ -437,7 +437,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                           <span className={`text-2xl font-black tabular-nums ${pStyle.text} leading-none`}>{Math.round(currentSug.confidence * 100)}%</span>
                        </div>
                        <div className="w-48 bg-white/10 rounded-full h-1.5 overflow-hidden p-0">
-                          <div className={`h-full bg-gradient-to-r ${pStyle.gradient} rounded-full transition-all duration-1000 ease-out shadow-sm`} style={{ width: `${Math.round(currentSug.confidence * 100)}%` }} />
+                           <div className={`h-full bg-gradient-to-r ${pStyle.gradient} rounded-full transition-all duration-1000 ease-out`} style={{ width: `${Math.round(currentSug.confidence * 100)}%` }} />
                        </div>
                     </div>
                  </div>
@@ -499,7 +499,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
       })()}
 
        {/* Main Chat Card: Premium Glassmorphism */}
-       <div className="bg-white/90 backdrop-blur-3xl border border-white/50 shadow-[0_32px_100px_-20px_rgba(0,0,0,0.1)] rounded-[3.5rem] overflow-hidden relative z-10 flex flex-col transition-all duration-700 hover:shadow-[0_50px_120px_-25px_rgba(0,0,0,0.15)] group/card">
+        <div className="bg-white/90 backdrop-blur-3xl border border-white/50 shadow-[0_32px_100px_-20px_rgba(0,0,0,0.1)] rounded-[3.5rem] overflow-hidden relative z-10 flex flex-col transition-all duration-700 hover:shadow-[0_50px_120px_-25px_rgba(0,0,0,0.15)] group/card">
             {/* Ambient Background Glows */}
             <div className="absolute top-0 left-0 w-full h-96 bg-gradient-to-br from-blue-50/50 via-indigo-50/20 to-transparent opacity-0 group-hover/card:opacity-100 transition-opacity duration-1000 pointer-events-none" />
             
@@ -522,14 +522,14 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                    const dotColor = isFYP ? "bg-indigo-400" : isPersonal ? "bg-rose-400" : "bg-blue-400";
                    
                    return (
-                    <div key={db.id} className={`group relative flex items-center gap-3 border ${badgeColor} px-6 py-2.5 rounded-full text-[10px] font-black uppercase tracking-[0.2em] shadow-sm transition-all duration-500 cursor-default hover:scale-105 hover:shadow-md active:scale-95`}>
+                     <div key={db.id} className={`group relative flex items-center gap-3 border ${badgeColor} px-6 py-2.5 rounded-full text-[10px] font-black uppercase tracking-[0.2em] transition-all duration-500 cursor-default hover:scale-105 active:scale-95`}>
                       <div className={`w-1.5 h-1.5 rounded-full ${dotColor} animate-pulse`} />
                       {db.name}
                     </div>
                   );
                 })}
                 {databases.length === 0 && (
-                  <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-6 py-2.5 rounded-full text-[10px] font-black text-slate-400 uppercase tracking-widest shadow-sm italic">
+                   <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-6 py-2.5 rounded-full text-[10px] font-black text-slate-400 uppercase tracking-widest italic">
                     <Activity size={12} className="opacity-50" /> Initializing Neural Link...
                   </div>
                 )}
@@ -549,7 +549,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                     value={prompt} 
                     onChange={(e) => setPrompt(e.target.value)} 
                     placeholder="Initialize mission or query database..." 
-                    className="relative w-full p-7 pl-16 pr-20 rounded-[2rem] border-2 border-slate-100 outline-none transition-all duration-500 focus:border-slate-900 focus:bg-white bg-slate-50/80 text-slate-900 font-bold placeholder:text-slate-400 placeholder:font-medium text-xl leading-tight shadow-sm" 
+                     className="relative w-full p-7 pl-16 pr-20 rounded-[2rem] border-2 border-slate-100 outline-none transition-all duration-500 focus:border-slate-900 focus:bg-white bg-slate-50/80 text-slate-900 font-bold placeholder:text-slate-400 placeholder:font-medium text-xl leading-tight" 
                     disabled={isLoading} 
                   />
                   <button 
@@ -574,7 +574,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                <div className={`mt-8 rounded-[2rem] border overflow-hidden animate-in fade-in zoom-in-95 duration-500 ${
                  pendingDecision?.action === "DELETE"
                    ? "border-red-100 bg-red-50/30"
-                   : "border-blue-100 bg-blue-50/30 shadow-inner"
+                   : "border-blue-100 bg-blue-50/30"
                }`}>
 
                  {/* Show thinking toggle - first */}
@@ -635,7 +635,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                         {pendingDecision.action === "PLAN" && pendingDecision.data.plan && (
                           <div className="mb-6 space-y-4">
                             {pendingDecision.data.planSummary && (
-                              <div className="p-4 bg-white/60 border border-blue-100 rounded-2xl shadow-sm">
+                               <div className="p-4 bg-white/60 border border-blue-100 rounded-2xl">
                                 <p className="text-xs text-blue-800 font-bold leading-relaxed flex items-center gap-2">
                                   <Sparkles size={14} className="text-blue-500 shrink-0" />
                                   {pendingDecision.data.planSummary}
@@ -644,13 +644,13 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                             )}
                             <div className="space-y-3">
                               {pendingDecision.data.plan.map((t, i) => (
-                                <div key={i} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm hover:border-indigo-200 transition-all duration-300">
+                                 <div key={i} className="bg-white p-4 rounded-2xl border border-slate-100 hover:border-indigo-200 transition-all duration-300">
                                   <div className="flex items-center justify-between mb-2">
                                     <div className="flex items-center gap-2">
                                       <span className="w-5 h-5 rounded-full bg-indigo-50 border border-indigo-100 text-indigo-600 text-[9px] font-black flex items-center justify-center">{i + 1}</span>
                                       <span className="font-black text-slate-800 text-[13px] tracking-tight">{t.title}</span>
                                     </div>
-                                    {t.date && <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full uppercase tracking-widest border border-indigo-100">{formatDeadline(t.date)}</span>}
+                                     {t.date && <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full uppercase tracking-widest border border-indigo-100">{formatDeadline(t.date)}</span>}
                                   </div>
                                   <div className="flex items-center justify-between">
                                     {t.reason && <p className="text-[11px] font-medium text-slate-500 leading-relaxed">{t.reason}</p>}
@@ -664,7 +664,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
 
                         {/* General Action Details */}
                         {pendingDecision.action !== "PLAN" && (
-                           <div className="mb-8 p-5 bg-white border border-slate-100 rounded-[1.5rem] shadow-sm flex flex-col gap-3">
+                            <div className="mb-8 p-5 bg-white border border-slate-100 rounded-[1.5rem] flex flex-col gap-3">
                               {pendingDecision.action === "UPDATE" && (
                                 <>
                                   <div className="flex items-center justify-between">
@@ -707,7 +707,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                        {/* Warnings Rendering */}
                        <div className="space-y-3 mb-8">
                          {deadlineConflict && conflictingTaskNames.length > 0 && (
-                           <div className="flex items-start gap-4 rounded-2xl bg-orange-50/80 border border-orange-200 px-5 py-4 shadow-sm shadow-orange-500/5 transition-all animate-in zoom-in-95 duration-500">
+                           <div className="flex items-start gap-4 rounded-2xl bg-orange-50/80 border border-orange-200 px-5 py-4 transition-all animate-in zoom-in-95 duration-500">
                              <div className="p-2 bg-orange-100 rounded-xl text-orange-600">
                                 <AlertTriangle size={18} />
                              </div>
@@ -720,7 +720,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                            </div>
                          )}
                          {duplicateTask && duplicateTaskName && (
-                           <div className="flex items-start gap-4 rounded-2xl bg-orange-50/80 border border-orange-200 px-5 py-4 shadow-sm shadow-orange-500/5 transition-all animate-in zoom-in-95 duration-500">
+                           <div className="flex items-start gap-4 rounded-2xl bg-orange-50/80 border border-orange-200 px-5 py-4 transition-all animate-in zoom-in-95 duration-500">
                              <div className="p-2 bg-orange-100 rounded-xl text-orange-600">
                                 <AlertTriangle size={18} />
                              </div>
@@ -736,13 +736,13 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
 
                        {/* Confirm / Cancel Buttons */}
                        <div className="flex gap-4">
-                         <button onClick={handleCancel} className="flex-1 py-4 rounded-2xl bg-white border border-slate-200 text-[13px] font-black text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition-all duration-300 shadow-sm cursor-pointer uppercase tracking-widest">
+                         <button onClick={handleCancel} className="flex-1 py-4 rounded-2xl bg-white border border-slate-200 text-[13px] font-black text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition-all duration-300 cursor-pointer uppercase tracking-widest">
                            Dismiss
                          </button>
                           <button 
                              onClick={handleConfirm} 
                              disabled={confirmLoading} 
-                             className={`flex-[2] py-4 rounded-2xl text-[13px] font-black text-white transition-all duration-500 cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2.5 shadow-xl uppercase tracking-[0.15em] ${pendingDecision.action === "DELETE" ? "bg-red-500 hover:bg-black shadow-red-200/50" : "bg-slate-900 hover:bg-blue-600 shadow-md"}`}
+                              className={`flex-[2] py-4 rounded-2xl text-[13px] font-black text-white transition-all duration-500 cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2.5 uppercase tracking-[0.15em] ${pendingDecision.action === "DELETE" ? "bg-red-500 hover:bg-black" : "bg-slate-900 hover:bg-blue-600"}`}
                           >
                             {confirmLoading ? (
                               <div className="animate-spin h-5 w-5 border-3 border-white border-t-transparent rounded-full" />
@@ -772,7 +772,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                     <div className="flex items-center justify-between mb-8 px-8">
                        <div className="flex flex-col gap-1.5">
                         <div className="flex items-center gap-3">
-                           <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.5)]"></div>
+                            <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
                            <h4 className="text-[12px] font-black text-slate-900 uppercase tracking-[0.4em]">Notion Ledger</h4>
                         </div>
                         <div className="h-0.5 w-full bg-slate-100 rounded-full overflow-hidden">
@@ -780,17 +780,17 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                         </div>
                        </div>
                       <div className="flex items-center gap-3">
-                         <span className="flex items-center gap-2 text-[10px] font-black text-slate-500 bg-white px-4 py-2 rounded-full border border-slate-100 uppercase tracking-widest shadow-sm">
+                          <span className="flex items-center gap-2 text-[10px] font-black text-slate-500 bg-white px-4 py-2 rounded-full border border-slate-100 uppercase tracking-widest">
                             <Clock size={12} className="text-blue-500 animate-pulse" />
                             Auto-Syncing
                          </span>
-                         <span className="text-[11px] font-black text-blue-600 bg-blue-50 px-4 py-2 rounded-full border border-blue-100 uppercase tracking-[0.2em] shadow-sm">
+                          <span className="text-[11px] font-black text-blue-600 bg-blue-50 px-4 py-2 rounded-full border border-blue-100 uppercase tracking-[0.2em]">
                             {taskList.length} Targets
                          </span>
                       </div>
                     </div>
                     
-                    <div className="bg-white border border-slate-200/60 rounded-[3rem] overflow-hidden shadow-2xl relative">
+                     <div className="bg-white border border-slate-200/60 rounded-[3rem] overflow-hidden relative text-slate-900">
                       {/* Subtle Internal Gradient */}
                       <div className="absolute inset-0 bg-gradient-to-b from-slate-50/30 to-white pointer-events-none" />
 
@@ -844,7 +844,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                                     </span>
                                   </td>
                                   <td className="px-10 py-7">
-                                     <div className={`inline-flex items-center gap-2.5 border ${statusStyles} px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-[0.2em] shadow-sm transition-transform duration-500 group-hover:scale-105`}>
+                                      <div className={`inline-flex items-center gap-2.5 border ${statusStyles} px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-[0.2em] transition-transform duration-500 group-hover:scale-105`}>
                                         <div className={`w-1 h-1 rounded-full ${dotColor} animate-pulse`} />
                                         {task.status || "Planned"}
                                      </div>

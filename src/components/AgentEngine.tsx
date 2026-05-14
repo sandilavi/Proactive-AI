@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useCallback, useRef } from "react";
 import { fetchNotionTasks } from "@/app/actions/notion-actions";
-import { getCapacityInsights } from "@/app/actions/agent-actions";
+import { getCapacityInsights } from "@/app/actions/strategy-actions";
 
 const NOTIFICATION_INTERVAL = 2 * 60 * 1000; // 2 minutes
 

@@ -11,7 +11,7 @@ import {
   Sparkles,
   Check
 } from 'lucide-react';
-import { generateHorizonRoadmap, HorizonRoadmap } from "@/app/actions/agent-actions";
+import { generateHorizonRoadmap, HorizonRoadmap } from "@/app/actions/horizon-actions";
 import { batchCreateNotionTasks } from "@/app/actions/notion-actions";
 
 export default function HorizonView() {
@@ -63,14 +63,14 @@ export default function HorizonView() {
     <div className="space-y-12 animate-in fade-in zoom-in-95 duration-700">
       
       {/* Input Area: Premium Glassmorphism */}
-      <form onSubmit={handleGenerate} className="bg-white/80 backdrop-blur-2xl rounded-[3rem] p-10 border border-white/40 shadow-[0_32px_80px_-15px_rgba(0,0,0,0.08)] relative overflow-hidden group transition-all duration-700 hover:shadow-[0_45px_100px_-20px_rgba(0,0,0,0.12)]">
+      <form onSubmit={handleGenerate} className="bg-white/80 backdrop-blur-2xl rounded-[3rem] p-10 border border-white/40 relative overflow-hidden group transition-all duration-700">
          {/* Background Decoration */}
          <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-br from-indigo-500/10 to-transparent rounded-bl-full opacity-50 pointer-events-none transition-all duration-700 group-hover:scale-110 group-hover:rotate-6"></div>
          
          <div className="relative z-10 space-y-6">
             <div className="space-y-2">
                <h2 className="text-3xl font-black text-slate-800 tracking-tight flex items-center gap-3">
-                  <div className="p-2 bg-indigo-600 rounded-2xl text-white shadow-lg shadow-indigo-200">
+                  <div className="p-2 bg-indigo-600 rounded-2xl text-white">
                     <Compass size={28} />
                   </div>
                   Plot Your Next Big Move
@@ -96,7 +96,7 @@ export default function HorizonView() {
                <button 
                   type="submit" 
                   disabled={loading || !goal.trim()} 
-                  className="px-10 py-6 bg-slate-900 hover:bg-blue-600 text-white rounded-[1.2rem] font-black text-sm uppercase tracking-[0.2em] flex items-center justify-center gap-3 transition-all duration-500 shadow-xl shadow-md hover:shadow-black/20 disabled:opacity-30 disabled:cursor-not-allowed group-hover:scale-[1.02] active:scale-95"
+                  className="px-10 py-6 bg-slate-900 hover:bg-blue-600 text-white rounded-[1.2rem] font-black text-sm uppercase tracking-[0.2em] flex items-center justify-center gap-3 transition-all duration-500 disabled:opacity-30 disabled:cursor-not-allowed group-hover:scale-[1.02] active:scale-95"
                >
                   {loading ? <Loader2 size={18} className="animate-spin" /> : <Zap size={18} className="fill-current" />}
                   <span>{loading ? "Calculating..." : "Generate Roadmap"}</span>
@@ -110,12 +110,12 @@ export default function HorizonView() {
       {roadmap && (
         <div className="animate-in slide-in-from-bottom-12 duration-1000 space-y-12">
            {/* Summary Header: Cinematic Look */}
-           <div className="bg-slate-900 rounded-[3.5rem] p-12 text-white shadow-2xl shadow-md relative overflow-hidden group">
+           <div className="bg-slate-900 rounded-[3.5rem] p-12 text-white relative overflow-hidden group">
              {/* Animated Overlay */}
              <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10 mix-blend-overlay"></div>
              
              <div className="relative z-10 w-full mb-8">
-               <div className="inline-flex items-center gap-2.5 bg-white/10 backdrop-blur-xl px-5 py-2.5 rounded-full text-[11px] font-black uppercase tracking-[0.25em] border border-white/10 mb-6 shadow-2xl">
+               <div className="inline-flex items-center gap-2.5 bg-white/10 backdrop-blur-xl px-5 py-2.5 rounded-full text-[11px] font-black uppercase tracking-[0.25em] border border-white/10 mb-6">
                   <Sparkles size={14} className="text-indigo-400" /> Horizon Blueprint
                </div>
                <h3 className="text-4xl font-black leading-tight tracking-tighter mb-6 bg-clip-text text-transparent bg-gradient-to-r from-white via-white to-white/60">
@@ -175,13 +175,13 @@ export default function HorizonView() {
                   <div key={idx} className="relative group/task pl-20">
                      {/* Timeline Node: Custom Pill */}
                      <div className="absolute left-0 top-0 bottom-0 flex flex-col items-center">
-                        <div className="w-14 h-14 rounded-[1.2rem] bg-white border border-indigo-100 shadow-sm flex flex-col items-center justify-center text-indigo-600 z-10 group-hover/task:bg-indigo-600 group-hover/task:text-white group-hover/task:scale-110 transition-all duration-500">
+                        <div className="w-14 h-14 rounded-[1.2rem] bg-white border border-indigo-100 flex flex-col items-center justify-center text-indigo-600 z-10 group-hover/task:bg-indigo-600 group-hover/task:text-white group-hover/task:scale-110 transition-all duration-500">
                            <span className="text-[9px] font-black uppercase tracking-widest opacity-80">{new Date(task.date).toLocaleDateString([], { month: 'short' })}</span>
                            <span className="text-[14px] font-black leading-none mt-0.5">{new Date(task.date).getDate()}</span>
                         </div>
                      </div>
                      
-                     <div className="bg-white/60 backdrop-blur-xl rounded-[2.5rem] border border-slate-100 p-8 shadow-sm transition-all duration-500 hover:shadow-xl hover:bg-white/90 hover:-translate-y-1 relative group hover:border-indigo-100/50">
+                     <div className="bg-white/60 backdrop-blur-xl rounded-[2.5rem] border border-slate-100 p-8 transition-all duration-500 hover:bg-white/90 hover:-translate-y-1 relative group hover:border-indigo-100/50">
                         <div className="flex flex-col md:flex-row md:items-center gap-5 justify-between mb-5">
                            <div className="flex items-center gap-4">
                               <div className="flex flex-col">
@@ -192,7 +192,7 @@ export default function HorizonView() {
                                  </div>
                               </div>
                            </div>
-                           <div className="flex items-center gap-2 text-[11px] font-black text-slate-500 bg-slate-50 px-4 py-2 rounded-full border border-slate-100 shadow-sm group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors uppercase tracking-widest">
+                           <div className="flex items-center gap-2 text-[11px] font-black text-slate-500 bg-slate-50 px-4 py-2 rounded-full border border-slate-100 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors uppercase tracking-widest">
                               <Clock size={14} className="text-indigo-400" /> 
                                  Allocated Time: {task.durationHours}h
                            </div>
@@ -215,7 +215,7 @@ export default function HorizonView() {
                 <button 
                 onClick={handleExport}
                 disabled={syncing || syncSuccess}
-                className={`inline-flex items-center gap-3 px-12 py-5 rounded-[1.5rem] font-black uppercase tracking-[0.3em] transition-all duration-700 group border text-[11px] shadow-2xl cursor-pointer disabled:cursor-not-allowed ${syncSuccess ? "bg-emerald-50 text-emerald-600 border-emerald-100" : "bg-slate-900 text-white border-slate-800 hover:bg-blue-600 hover:-translate-y-1 active:scale-95"}`}
+                className={`inline-flex items-center gap-3 px-12 py-5 rounded-[1.5rem] font-black uppercase tracking-[0.3em] transition-all duration-700 group border text-[11px] cursor-pointer disabled:cursor-not-allowed ${syncSuccess ? "bg-emerald-50 text-emerald-600 border-emerald-100" : "bg-slate-900 text-white border-slate-800 hover:bg-blue-600 hover:-translate-y-1 active:scale-95"}`}
               >
                  {syncing ? (
                     <Loader2 size={16} className="animate-spin text-blue-400" />

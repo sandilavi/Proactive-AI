@@ -34,7 +34,7 @@ export default function Sidebar() {
   ];
 
   return (
-    <aside className="w-64 h-screen bg-white/80 backdrop-blur-3xl border-r border-slate-100/60 flex flex-col sticky top-0 shadow-[20px_0_40px_-15px_rgba(0,0,0,0.02)] overflow-hidden">
+    <aside className="w-64 h-screen bg-white/80 backdrop-blur-3xl border-r border-slate-100/60 flex flex-col sticky top-0 overflow-hidden">
       {/* Brand: Industrial High-End */}
       <div className="p-8">
         <Link href="/dashboard" className="flex items-center gap-3 group">
@@ -67,7 +67,7 @@ export default function Sidebar() {
                 group relative flex items-center gap-4 px-4 py-3 rounded-[1.25rem] transition-all duration-500
                 cursor-pointer
                 ${isActive 
-                  ? 'bg-blue-600 text-white shadow-xl translate-x-1' 
+                  ? 'bg-blue-600 text-white translate-x-1' 
                   : 'text-slate-500 hover:bg-slate-50/80 hover:text-slate-900 hover:translate-x-1'
                 }
               `}
@@ -75,7 +75,7 @@ export default function Sidebar() {
 
               <div className={`
                 relative z-10 p-2.5 rounded-[0.8rem] transition-all duration-500
-                ${isActive ? 'bg-white/20' : 'bg-slate-50 group-hover:bg-white group-hover:shadow-sm'}
+                ${isActive ? 'bg-white/20' : 'bg-slate-50 group-hover:bg-white'}
               `}>
                 <Icon size={18} className={isActive ? 'text-white' : 'text-slate-500 group-hover:text-blue-600'} />
               </div>

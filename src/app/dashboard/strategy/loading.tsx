@@ -10,12 +10,12 @@ export default function Loading() {
       </div>
 
       {/* Main Hero Card Skeleton */}
-      <div className="h-64 w-full bg-slate-200 rounded-[2.5rem] shadow-sm" />
+      <div className="h-64 w-full bg-slate-200 rounded-[2.5rem]" />
 
       {/* Grid Skeletons */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {[1, 2, 3, 4, 5, 6].map((i) => (
-          <div key={i} className="h-96 w-full bg-white border border-slate-100 rounded-[2rem] shadow-sm" />
+          <div key={i} className="h-96 w-full bg-white border border-slate-100 rounded-[2rem]" />
         ))}
       </div>
     </div>

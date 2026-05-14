@@ -7,7 +7,8 @@ import {
   Loader2, 
   TrendingUp
 } from 'lucide-react';
-import { getCapacityInsights, CapacityReport, NotionTask } from "@/app/actions/agent-actions";
+import { getCapacityInsights, CapacityReport } from "@/app/actions/strategy-actions";
+import { NotionTask } from "@/app/actions/assistant-actions";
 import { fetchNotionTasks } from "@/app/actions/notion-actions";
 
 interface StrategyViewProps {
@@ -142,7 +143,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center py-32 bg-white rounded-[3rem] border border-slate-100 shadow-sm border-dashed">
+      <div className="flex flex-col items-center justify-center py-32 bg-white rounded-[3rem] border border-slate-100 border-dashed">
         <Loader2 className="w-12 h-12 text-purple-600 animate-spin mb-4" />
         <p className="text-lg font-bold text-slate-800">Analyzing workload...</p>
         <p className="text-sm text-slate-500">Estimating task durations and checking constraints.</p>
@@ -152,7 +153,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
 
   if (!report?.insights?.length) {
     return (
-      <div className="text-center py-24 bg-white rounded-[3rem] border border-slate-100 shadow-sm">
+      <div className="text-center py-24 bg-white rounded-[3rem] border border-slate-100">
         <LayoutDashboard className="mx-auto text-slate-200 mb-6" size={64} />
         <h3 className="text-xl font-bold text-slate-800 mb-2">No Active Tasks Found</h3>
         <p className="max-w-xs mx-auto text-sm text-slate-500 mb-4">Add chores or projects to your Notion databases to enable strategic analysis.</p>
@@ -170,14 +171,14 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
    return (
     <div className="space-y-10 animate-in fade-in zoom-in-95 duration-1000">
       {/* Top Header Card: Cinematic Strategy Overlook */}
-      <div className="bg-slate-900 rounded-[3.5rem] p-12 text-white shadow-xl relative overflow-hidden group">
+      <div className="bg-slate-900 rounded-[3.5rem] p-12 text-white relative overflow-hidden group">
          {/* Animated Grid Overlay */}
          <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10 mix-blend-overlay"></div>
 
          <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-10">
             <div className="space-y-6 w-full">
                {/* UI: Global Strategic Header */}
-               <div className="inline-flex items-center gap-2.5 bg-white/10 backdrop-blur-xl px-5 py-2.5 rounded-full text-[11px] font-black uppercase tracking-[0.25em] border border-white/10 shadow-2xl">
+               <div className="inline-flex items-center gap-2.5 bg-white/10 backdrop-blur-xl px-5 py-2.5 rounded-full text-[11px] font-black uppercase tracking-[0.25em] border border-white/10">
                   <Sparkles size={14} className="text-purple-400" /> Strategic Capacity Report
                </div>
                <h2 className="text-4xl font-black leading-tight tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-white via-white to-white/70">
@@ -325,8 +326,8 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                 className={`bg-white rounded-[3rem] p-10 transition-all duration-500 relative overflow-hidden flex flex-col group cursor-default
                   hover:-translate-y-3
                   ${isToday 
-                    ? 'border-[2px] border-slate-900 shadow-xl hover:shadow-2xl' 
-                    : 'border border-slate-100 shadow-sm hover:shadow-md'
+                    ? 'border-[2px] border-slate-900' 
+                    : 'border border-slate-100'
                   } 
                   ${isOverload ? 'bg-rose-50/10' : 'bg-white/70 backdrop-blur-xl'}
                 `}
@@ -350,7 +351,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                         {isInvalid ? "Past Due" : date.toLocaleDateString([], { month: 'short', day: 'numeric' })}
                       </span>
                     </div>
-                    <div className={`p-4 rounded-[1.5rem] transition-all duration-500 border shadow-sm ${isOverload 
+                    <div className={`p-4 rounded-[1.5rem] transition-all duration-500 border ${isOverload 
                        ? 'bg-rose-50 text-rose-600 border-rose-100 group-hover:bg-rose-600 group-hover:text-white' 
                        : isBusy 
                        ? 'bg-orange-50 text-orange-600 border-orange-100 group-hover:bg-orange-600 group-hover:text-white' 
