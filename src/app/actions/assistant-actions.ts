@@ -51,7 +51,9 @@ export async function processUserPrompt(prompt: string, taskContext: string, use
   const offsetMs = (parseInt(h) * 60 + parseInt(m)) * 60000 * (sign === "+" ? 1 : -1);
   const localNow = new Date(new Date().getTime() + offsetMs);
   const today = localNow.toISOString().split("T")[0];
-  const dayName = localNow.toLocaleDateString('en-US', { weekday: 'long' });
+  const dayName = localNow.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
+  const currentTime = localNow.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
+
 
   const dbListStr = databaseNames.length > 0
     ? `\n\nAVAILABLE DATABASES: ${databaseNames.map(n => `"${n}"`).join(", ")}\n- For CREATE: pick the most logical database based on the task context. Set "targetDatabase" to the exact database name.\n- For UPDATE/DELETE: the taskId is globally unique, no database routing needed.`
@@ -62,7 +64,7 @@ export async function processUserPrompt(prompt: string, taskContext: string, use
     messages: [
       {
         role: "system",
-        content: `You are a Notion Task Agent. Today is ${dayName}, ${today}. Timezone offset: ${userOffset}.
+        content: `You are a Notion Task Agent. Today is ${dayName}, ${today}. Current Time is ${currentTime}. Timezone offset: ${userOffset}.
 
         EXISTING TASKS:
         ${taskContext}${dbListStr}
