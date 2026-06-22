@@ -12,13 +12,34 @@ describe('notion-actions', () => {
   describe('fetchNotionTasks sorting logic', () => {
     test('should sort "Done" tasks to the bottom', async () => {
       // 1. Arrange: Mock the DB data to return unsorted tasks
-      const mockTasks = [
-        { id: '1', status: 'Done', deadline: '2026-05-01' },
-        { id: '2', status: 'In Progress', deadline: '2026-05-01' },
+      const mockDb = {
+        id: 'db-1',
+        name: 'Mock DB',
+        propNames: { title: 'Name', status: 'Status', date: 'Date' },
+        propTypes: { status: 'status' }
+      };
+
+      const mockRawPages = [
+        {
+          id: '1',
+          properties: {
+            Status: { status: { name: 'Done' } },
+            Name: { title: [{ plain_text: 'Task 1' }] },
+            Date: { date: { start: '2026-05-01' } }
+          }
+        },
+        {
+          id: '2',
+          properties: {
+            Status: { status: { name: 'In Progress' } },
+            Name: { title: [{ plain_text: 'Task 2' }] },
+            Date: { date: { start: '2026-05-01' } }
+          }
+        },
       ];
       
-      // Force fetchTasksFromDatabase mock to return this
-      (notionLib.getRawNotionTasks as jest.Mock).mockResolvedValue(mockTasks);
+      (notionLib.discoverDatabases as jest.Mock).mockResolvedValue([mockDb]);
+      (notionLib.getRawNotionTasks as jest.Mock).mockResolvedValue(mockRawPages);
 
       // 2. Act
       const result = await fetchNotionTasks();

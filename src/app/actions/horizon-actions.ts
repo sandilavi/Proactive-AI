@@ -53,8 +53,8 @@ export async function generateHorizonRoadmap(goalPrompt: string): Promise<Horizo
         
         PLANNING RULES:
         1. STRATEGIC SEQUENCING: Prioritize your REAL-WORLD availability. Look at the CURRENT WORKLOAD above before assigning tasks.
-        2. SMART AVOIDANCE: If a date is labeled "BUSY" or "OVERLOADED" (meaning it has >= 9 hours of work), DO NOT schedule new tasks on that day. Skip it and find the next available day with < 7 hours of existing work to ensure you don't instantly make it "BUSY".
-        3. HARD CAP: Ensure the NEW roadmap tasks + EXISTING workload never exceed 12 hours total for any single day.
+        2. SMART AVOIDANCE: If a date is labeled "BUSY" (meaning it has >= 10 hours of work), DO NOT schedule new tasks on that day. Skip it and find the next available day with < 7 hours of existing work to ensure you don't instantly make it "BUSY".
+        3. HARD CAP: Ensure the NEW roadmap tasks + EXISTING workload never exceed 10 hours total for any single day.
         4. ROADMAP STRUCTURE: Generate 4 - 8 subtasks that logically complete the goal.
         
         OUTPUT strict JSON schema:

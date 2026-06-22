@@ -11,6 +11,8 @@ import { getCapacityInsights, CapacityReport } from "@/app/actions/strategy-acti
 import { NotionTask } from "@/app/actions/assistant-actions";
 import { fetchNotionTasks } from "@/app/actions/notion-actions";
 
+const normalizeName = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
+
 interface StrategyViewProps {
   tasks: NotionTask[];
   initialReport?: CapacityReport | null;
@@ -26,6 +28,17 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
   // the first render matches the server's HTML, then instantly switching to local memory.
   useEffect(() => {
     if (typeof window !== "undefined") {
+      // VERSION BUST: Clear stale fingerprints if cache schema changed (added reason field & 10h threshold simplification)
+        const CACHE_VERSION = "v5-fuzzy-matching";
+       if (localStorage.getItem("proactive_cache_schema") !== CACHE_VERSION) {
+         localStorage.removeItem("proactive_capacity_fingerprint_strategy");
+         localStorage.removeItem("proactive_capacity_last_day_strategy");
+         localStorage.removeItem("proactive_capacity_fingerprint");
+         localStorage.removeItem("proactive_capacity_full_report");
+         localStorage.removeItem("proactive_capacity_alerts");
+        localStorage.setItem("proactive_cache_schema", CACHE_VERSION);
+      }
+
       const isInitialError = report?.overallSummary?.includes("Rate Limit") || report?.overallSummary?.includes("API Error");
       const hasNoInsights = !report?.insights || report?.insights?.length === 0;
 
@@ -83,8 +96,19 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
         Object.entries(v2Vault).forEach(([key, data]: [string, any]) => {
           savedEstimates[key] = data.value || data;
         });
+
+        // Also build compound-key format matching strategy-actions.ts cache (id-name)
+        // so that the server-side taskEstimationCache uses saved estimates instead of re-estimating
+        const savedEstimatesForServer: Record<string, number> = { ...savedEstimates };
+        freshTasks.forEach(t => {
+          const byId = savedEstimates[t.id];
+          const byName = savedEstimates[t.name];
+          const compound = `${t.id}-${t.name}`;
+          if (byId !== undefined) savedEstimatesForServer[compound] = byId;
+          else if (byName !== undefined) savedEstimatesForServer[compound] = byName;
+        });
         
-        const data = await getCapacityInsights(freshTasks, userOffset, savedEstimates);
+        const data = await getCapacityInsights(freshTasks, userOffset, savedEstimatesForServer);
         
         // Update fingerprints ONLY after a successful (non-cooldown) call
         const isRateLimitResponse = data?.overallSummary?.includes("Rate Limit");
@@ -94,9 +118,158 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
           localStorage.setItem("proactive_capacity_full_report", JSON.stringify(data));
           
           // Legacy Sync: Update capacity alerts for the global hub
-          const alerts = data.insights.filter(i => i.status === "BUSY" || i.status === "OVERLOADED");
+          const capacityAlerts: any[] = [];
+          const toHumanDate = (iso: string) => {
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return iso;
+            return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+          };
+
+          const updatedEstimates = { ...savedEstimates };
+          if (data && data.insights) {
+            data.insights.forEach(day => {
+              day.taskInsights?.forEach(t => {
+                if (t.id) updatedEstimates[t.id] = t.estimatedHours;
+                updatedEstimates[t.name] = t.estimatedHours;
+              });
+            });
+          }
+
+          // Save updated estimates to localStorage
+          const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+          const activeTaskIds = new Set(freshTasks.map(t => t.id));
+          const activeTaskNames = new Set(freshTasks.map(t => t.name));
+          
+          const currentVault = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("proactive_task_estimates_v2") || "{}") : {};
+          const updatedVault = { ...currentVault };
+
+          Object.entries(updatedEstimates).forEach(([key, val]) => {
+            updatedVault[key] = { value: val as number, lastSeen: Date.now() };
+          });
+
+          const cleanedVault: Record<string, any> = {};
+          Object.entries(updatedVault).forEach(([key, data]: [string, any]) => {
+            const isStillActive = activeTaskIds.has(key) || activeTaskNames.has(key);
+            const isRecentlySeen = (Date.now() - data.lastSeen) < ONE_DAY_MS;
+            if (isStillActive || isRecentlySeen) {
+              cleanedVault[key] = data;
+            }
+          });
+          localStorage.setItem("proactive_task_estimates_v2", JSON.stringify(cleanedVault));
+
+          const busyInsights = data.insights.filter(i => i.status === "BUSY");
+          busyInsights.forEach(i => {
+              const dayMitigations = data.mitigations?.filter(m => m.date === i.date) || [];
+              if (dayMitigations.length > 0) {
+                dayMitigations.forEach(mit => {
+                  const formattedSuggestion = `I'm recommending you to move ${mit.mitigationTaskName} to ${toHumanDate(mit.mitigationTargetDate)} to reduce the workload on ${toHumanDate(i.date)}.`;
+                  
+                  let estHours = 1.5;
+                  const matchedTask = freshTasks.find(t => normalizeName(t.name) === normalizeName(mit.mitigationTaskName));
+                  if (matchedTask && updatedEstimates[matchedTask.id]) {
+                    estHours = updatedEstimates[matchedTask.id];
+                  } else if (updatedEstimates[mit.mitigationTaskName]) {
+                    estHours = updatedEstimates[mit.mitigationTaskName];
+                  }
+
+                  capacityAlerts.push({
+                      id: `capacity-${i.date}-${mit.mitigationTaskName}`,
+                      taskId: `capacity-${i.date}-${mit.mitigationTaskName}`,
+                      taskName: `Busy Day on ${i.date}`,
+                      urgency: "CAPACITY_BUSY",
+                      deadline: i.date,
+                      date: i.date,
+                      timestamp: new Date().toISOString(),
+                      alertedAt: Date.now(),
+                      read: false,
+                      suggestion: formattedSuggestion,
+                      reason: mit.reason,
+                      totalHours: i.totalHours,
+                      status: "BUSY",
+                      mitigationSuggestion: formattedSuggestion,
+                      mitigationTaskName: mit.mitigationTaskName,
+                      mitigationTargetDate: mit.mitigationTargetDate,
+                      estimatedHours: estHours,
+                  });
+                });
+              } else {
+                  const formattedSuggestion = (i.mitigationTaskName && i.mitigationTargetDate)
+                    ? `I'm recommending you to move ${i.mitigationTaskName} to ${toHumanDate(i.mitigationTargetDate)} to reduce the workload on ${toHumanDate(i.date)}.`
+                    : i.suggestion;
+
+                  let estHours = 1.5;
+                  const taskName = i.mitigationTaskName;
+                  if (taskName) {
+                    const matchedTask = freshTasks.find(t => normalizeName(t.name) === normalizeName(taskName));
+                    if (matchedTask && updatedEstimates[matchedTask.id]) {
+                      estHours = updatedEstimates[matchedTask.id];
+                    } else if (updatedEstimates[taskName]) {
+                      estHours = updatedEstimates[taskName];
+                    }
+                  }
+
+                  capacityAlerts.push({
+                      id: `capacity-${i.date}`,
+                      taskId: `capacity-${i.date}`,
+                      taskName: `Busy Day on ${i.date}`,
+                      urgency: "CAPACITY_BUSY",
+                      deadline: i.date,
+                      date: i.date,
+                      timestamp: new Date().toISOString(),
+                      alertedAt: Date.now(),
+                      read: false,
+                      suggestion: formattedSuggestion,
+                      reason: i.reason,
+                      totalHours: i.totalHours,
+                      status: "BUSY",
+                      mitigationSuggestion: formattedSuggestion,
+                      mitigationTaskName: i.mitigationTaskName,
+                      mitigationTargetDate: i.mitigationTargetDate,
+                      estimatedHours: estHours,
+                  });
+              }
+          });
+
+          // Also process overdue mitigations — past SAFE days skipped by busyInsights loop
+          const todayForOverdue = new Date(new Date().getTime() - (new Date().getTimezoneOffset() * 60000))
+            .toISOString().split("T")[0];
+          const overdueMits = (data.mitigations || []).filter(m => m.date < todayForOverdue);
+          overdueMits.forEach(mit => {
+            // Avoid duplicates (in case the past day was also BUSY)
+            const alreadyAdded = capacityAlerts.some(a => a.id === `overdue-${mit.date}-${mit.mitigationTaskName}`);
+            if (alreadyAdded) return;
+
+            let estHours = 1.5;
+            const matchedTask = freshTasks.find(t => normalizeName(t.name) === normalizeName(mit.mitigationTaskName));
+            if (matchedTask && updatedEstimates[matchedTask.id]) {
+              estHours = updatedEstimates[matchedTask.id];
+            } else if (updatedEstimates[mit.mitigationTaskName]) {
+              estHours = updatedEstimates[mit.mitigationTaskName];
+            }
+
+            capacityAlerts.push({
+              id: `overdue-${mit.date}-${mit.mitigationTaskName}`,
+              taskId: `overdue-${mit.date}-${mit.mitigationTaskName}`,
+              taskName: `Overdue on ${toHumanDate(mit.date)}`,
+              urgency: "CAPACITY_BUSY",
+              deadline: mit.date,
+              date: mit.date,
+              timestamp: new Date().toISOString(),
+              alertedAt: Date.now(),
+              read: false,
+              suggestion: mit.suggestion,
+              reason: mit.reason,
+              totalHours: 0,
+              status: "BUSY",
+              mitigationSuggestion: mit.suggestion,
+              mitigationTaskName: mit.mitigationTaskName,
+              mitigationTargetDate: mit.mitigationTargetDate,
+              estimatedHours: estHours,
+            });
+          });
+
           localStorage.setItem("proactive_capacity_alerts", JSON.stringify({
-            alerts,
+            alerts: capacityAlerts,
             summary: data.overallSummary,
             deadlineFingerprint: currentFingerprint,
             updatedAt: Date.now()
@@ -178,7 +351,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                <span className="inline-flex items-center gap-1.5 bg-slate-700 px-3 py-1 rounded text-xs font-semibold border border-slate-600 text-slate-200">
                   <Sparkles size={12} className="text-blue-400" /> Strategic Capacity Report
                </span>
-               <h2 className="text-lg font-bold uppercase tracking-wide">
+               <h2 className="text-lg font-bold tracking-wide">
                   {report.overallSummary}
                </h2>
                <div className="flex gap-8 pt-2">
@@ -187,9 +360,9 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                     <span className="text-xl font-bold">{activeTasks.length} Tasks</span>
                   </div>
                   <div className="flex flex-col border-l border-slate-700 pl-6">
-                    <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider mb-1">Critical Overloads</span>
-                    <span className="text-xl font-bold text-red-400">
-                      {(report?.insights || []).filter(i => i.status === "OVERLOADED").length} Days
+                    <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider mb-1">Busy Days</span>
+                    <span className="text-xl font-bold text-orange-400">
+                      {(report?.insights || []).filter(i => i.status === "BUSY").length} Days
                     </span>
                   </div>
                </div>
@@ -271,7 +444,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
             return {
               date: dateStr,
               totalHours,
-              status: totalHours >= 12 ? "OVERLOADED" as const : totalHours >= 9 ? "BUSY" as const : "SAFE" as const,
+              status: totalHours >= 10 ? "BUSY" as const : "SAFE" as const,
               taskInsights
             };
           });
@@ -285,7 +458,6 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
           });
 
           return sortedList.map((insight, idx) => {
-            const isOverload = insight.status === "OVERLOADED";
             const isBusy = insight.status === "BUSY";
             const date = new Date(insight.date);
             const isInvalid = isNaN(date.getTime());
@@ -308,10 +480,10 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                 key={idx} 
                 className={`bg-white rounded-lg p-5 border border-slate-200 shadow-sm relative overflow-hidden flex flex-col cursor-default
                   ${isToday ? 'border-slate-800 ring-1 ring-slate-800' : ''} 
-                  ${isOverload ? 'bg-red-50/10' : ''}
+                  ${isBusy ? 'bg-orange-50/10' : ''}
                 `}
               >
-                 {isOverload && <div className="absolute top-0 left-0 w-full h-1 bg-red-650" />}
+                 {isBusy && <div className="absolute top-0 left-0 w-full h-1 bg-orange-600" />}
                  
                  <div className="flex items-center justify-between mb-4">
                     <div className="flex flex-col">
@@ -330,9 +502,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                         {isInvalid ? "Past Due" : date.toLocaleDateString([], { month: 'short', day: 'numeric' })}
                       </span>
                     </div>
-                    <div className={`p-2 rounded border text-xs font-semibold ${isOverload 
-                       ? 'bg-red-50 text-red-700 border-red-200' 
-                       : isBusy 
+                    <div className={`p-2 rounded border text-xs font-semibold ${isBusy 
                        ? 'bg-orange-50 text-orange-700 border-orange-200' 
                        : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
                       <TrendingUp size={16} />

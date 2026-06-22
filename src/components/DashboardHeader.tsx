@@ -1,14 +1,16 @@
 "use client";
 import React, { useState, useEffect, useCallback } from 'react';
 import { usePathname } from 'next/navigation';
-import { Bell, BellRing, Clock, X, Brain, Target, Zap, Check, Loader2 } from 'lucide-react';
+import { Bell, BellRing, Clock, X, Brain, Target, Zap, Check, Loader2, RefreshCw } from 'lucide-react';
 import { updateNotionTask, fetchNotionTasks } from "@/app/actions/notion-actions";
+
+const normalizeName = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 type AgentAlert = {
     id: string;
     taskId: string;
     taskName: string;
-    urgency: "OVERDUE" | "TODAY" | "TOMORROW" | "SOON" | "CAPACITY_BUSY" | "CAPACITY_OVERLOADED";
+    urgency: "OVERDUE" | "TODAY" | "TOMORROW" | "SOON" | "CAPACITY_BUSY";
     deadline?: string;
     alertedAt: number;
     timestamp: string;
@@ -68,12 +70,36 @@ export default function DashboardHeader() {
   const [mitigationStates, setMitigationStates] = useState<Record<string, 'idle' | 'loading' | 'done' | 'rejected'>>({});
   const [resolutionShield, setResolutionShield] = useState<Record<string, number>>({});
   const [hasRejectedAll, setHasRejectedAll] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleForceRefresh = () => {
+    setIsRefreshing(true);
+    // Clear all capacity-related caches so the next AgentEngine cycle runs a fresh AI analysis
+    const keysToRemove = [
+      "proactive_capacity_full_report",
+      "proactive_capacity_fingerprint_strategy",
+      "proactive_capacity_last_day_strategy",
+      "proactive_capacity_alerts",
+      "proactive_capacity_fingerprint",
+      "proactive_last_capacity_read_timestamp",
+      "proactive_rejected_moves", // clear old dismissals so fresh suggestions are visible
+    ];
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+    setCapacityData(null);
+    setHasOverload(false);
+    setHasRejectedAll(false);
+    setUnreadCapacityCount(0);
+    // Tell AgentEngine to re-run immediately
+    window.dispatchEvent(new Event('force-agent-refresh'));
+    window.dispatchEvent(new Event('capacity-alerts-updated'));
+    setTimeout(() => setIsRefreshing(false), 2500);
+  };
 
   const handleAcceptMitigation = useCallback(async (alertId: string, taskName: string, targetDate: string) => {
     setMitigationStates(prev => ({ ...prev, [alertId]: 'loading' }));
     try {
       const allTasks = await fetchNotionTasks();
-      const matched = allTasks.find(t => t.name.toLowerCase().trim() === taskName.toLowerCase().trim());
+      const matched = allTasks.find(t => normalizeName(t.name) === normalizeName(taskName));
       if (!matched) {
         setMitigationStates(prev => ({ ...prev, [alertId]: 'idle' }));
         return;
@@ -157,7 +183,7 @@ export default function DashboardHeader() {
           setHasRejectedAll(totalInsights > 0 && visibleInsights === 0);
 
           setCapacityData(parsed);
-          setHasOverload(filteredAlerts.some((a: any) => a.status === "OVERLOADED"));
+          setHasOverload(filteredAlerts.some((a: any) => a.status === "BUSY"));
           
           const lastReadTime = Number(localStorage.getItem("proactive_last_capacity_read_timestamp") || 0);
           if (parsed.updatedAt > lastReadTime && validAlerts.length > 0) {
@@ -230,8 +256,7 @@ export default function DashboardHeader() {
     TODAY:    { border: "border-orange-200", bg: "bg-orange-50", newBg: "bg-orange-100", text: "text-orange-950", label: "Due Today", badge: "bg-orange-50 text-orange-700 border-orange-200" },
     TOMORROW: { border: "border-amber-200", bg: "bg-amber-50", newBg: "bg-amber-100", text: "text-amber-950", label: "Due Tomorrow", badge: "bg-amber-50 text-amber-700 border-amber-200" },
     SOON:     { border: "border-blue-200", bg: "bg-blue-50", newBg: "bg-blue-100", text: "text-blue-950", label: "Due Soon", badge: "bg-blue-50 text-blue-700 border-blue-200" },
-    CAPACITY_BUSY: { border: "border-indigo-200", bg: "bg-indigo-50", newBg: "bg-indigo-100", text: "text-indigo-950", label: "Heavy Load", badge: "bg-indigo-50 text-indigo-700 border-indigo-200" },
-    CAPACITY_OVERLOADED: { border: "border-red-200", bg: "bg-red-50", newBg: "bg-red-100", text: "text-red-950", label: "Overloaded", badge: "bg-red-50 text-red-700 border-red-200" },
+    CAPACITY_BUSY: { border: "border-indigo-200", bg: "bg-indigo-50", newBg: "bg-indigo-100", text: "text-indigo-950", label: "Busy Day", badge: "bg-indigo-50 text-indigo-700 border-indigo-200" },
   };
 
   return (
@@ -246,6 +271,21 @@ export default function DashboardHeader() {
       {/* Right: Notification Hub */}
       <div className="flex items-center gap-3 relative">
         
+        {/* Force Refresh Button */}
+        <button
+          id="force-refresh-capacity"
+          onClick={handleForceRefresh}
+          disabled={isRefreshing}
+          title="Force refresh capacity analysis"
+          className={`p-2 rounded border cursor-pointer flex items-center justify-center transition-all ${
+            isRefreshing
+              ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
+              : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50 hover:text-slate-700"
+          }`}
+        >
+          <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} />
+        </button>
+
         {/* Hub 1: Capacity Alerts */}
         <div className="relative">
           <button
@@ -283,7 +323,7 @@ export default function DashboardHeader() {
                     </div>
                   ) : (
                     capacityData.alerts
-                      .filter((alert: any) => (alert.totalHours || 0) > 0 && alert.date && alert.suggestion)
+                      .filter((alert: any) => ((alert.totalHours || 0) > 0 || String(alert.id).startsWith('overdue-')) && alert.date && (alert.suggestion || alert.mitigationSuggestion))
                       .filter((alert: any) => {
                         if (!alert.mitigationTaskName || !alert.mitigationTargetDate) return true;
                         const shieldKey = `${alert.mitigationTaskName.toLowerCase().trim()}-${alert.mitigationTargetDate}`;
@@ -291,28 +331,43 @@ export default function DashboardHeader() {
                         return !expiry || Date.now() > expiry;
                       })
                       .map((alert: any) => {
-                        const isOverload = alert.status === "OVERLOADED";
+                        const isBusy = alert.status === "BUSY";
                         const dateObj = new Date(alert.date);
                         const displayDate = isNaN(dateObj.getTime()) 
                           ? "Upcoming Period" 
                           : dateObj.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
-                        const alertId = alert.date;
+                        const alertId = alert.id || `capacity-${alert.date}-${alert.mitigationTaskName || ''}`;
 
                         return (
-                          <div key={alertId} className={`p-3 bg-white border rounded shadow-sm border-l-4 ${isOverload ? 'border-l-red-500' : 'border-l-orange-500'}`}>
+                          <div key={alertId} className={`p-3 bg-white border rounded shadow-sm border-l-4 ${
+                            String(alertId).startsWith('overdue-') ? 'border-l-red-500' : isBusy ? 'border-l-orange-500' : 'border-l-indigo-500'
+                          }`}>
                              <div className="flex items-center justify-between mb-1.5">
                                 <span className="text-xs font-bold text-slate-800">
-                                  {displayDate}
+                                  {String(alertId).startsWith('overdue-') ? `⚠ Overdue · ${displayDate}` : displayDate}
                                 </span>
-                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${isOverload ? 'bg-red-50 text-red-700 border-red-100' : 'bg-orange-50 text-orange-700 border-orange-100'}`}>
-                                  {(alert.totalHours || 0).toFixed(1)}h
+                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${isBusy ? 'bg-orange-50 text-orange-700 border-orange-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200'}`}>
+                                  {(alert.estimatedHours !== undefined ? alert.estimatedHours : (alert.totalHours || 0)).toFixed(1)}h
                                 </span>
                              </div>
 
-                             {alert.suggestion && (
-                               <div className={`mt-2 p-3 rounded border text-[11px] ${isOverload ? 'bg-red-50/50 border-red-100 text-red-950' : 'bg-orange-50/50 border-orange-100 text-orange-950'}`}>
-                                 <p className="font-semibold mb-2">{alert.suggestion}</p>
-                                 
+                             {(alert.mitigationTaskName || alert.suggestion) && (
+                               <div className={`mt-2 p-3 rounded border text-[11px] ${isBusy ? 'bg-orange-50/50 border-orange-100 text-orange-950' : 'bg-indigo-50/50 border-indigo-100 text-indigo-950'}`}>
+                                 <p className="leading-relaxed text-slate-800">
+                                   {alert.mitigationTaskName && alert.mitigationTargetDate ? (
+                                      <>
+                                        {"I'm recommending you to move "}
+                                        <span className="font-semibold">{alert.mitigationTaskName}</span>
+                                        {" to "}
+                                        {(() => { const d = new Date(alert.mitigationTargetDate!); return isNaN(d.getTime()) ? alert.mitigationTargetDate : d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' }); })()}
+                                        {String(alertId).startsWith('overdue-')
+                                          ? " as it is overdue and needs immediate attention."
+                                          : ` to reduce the workload on ${(() => { const d = new Date(alert.date); return isNaN(d.getTime()) ? alert.date : d.toLocaleDateString("en-US", { month: "long", day: "numeric" }); })()}.`
+                                        }
+                                      </>
+                                   ) : alert.suggestion}
+                                 </p>
+
                                  {alert.mitigationTaskName && alert.mitigationTargetDate && (
                                     <div className="mt-2.5 flex gap-2">
                                       <button 
@@ -337,7 +392,7 @@ export default function DashboardHeader() {
                                           
                                           setCapacityData(prev => prev ? {
                                             ...prev,
-                                            alerts: prev.alerts.filter((a: any) => a.date !== alert.date)
+                                            alerts: prev.alerts.filter((a: any) => a.id !== alertId)
                                           } : null);
                                         }}
                                         disabled={mitigationStates[alertId] === 'loading'}
@@ -437,9 +492,9 @@ export default function DashboardHeader() {
                               <p className="text-[11px] text-slate-400 line-through italic">Dismissed</p>
                             ) : (
                               <>
-                                <p className="text-xs text-slate-800 leading-tight">
-                                  {toast.mitigationSuggestion || toast.taskName}
-                                </p>
+                                 <p className="text-xs text-slate-800 leading-tight">
+                                   {toast.mitigationSuggestion || toast.taskName}
+                                 </p>
                                 
                                 {toast.deadline && toast.deadline !== "No Deadline" && (
                                   <div className="flex items-center gap-1 text-[9px] text-slate-500 font-semibold">
