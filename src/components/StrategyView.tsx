@@ -195,7 +195,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
               } else {
                   const formattedSuggestion = (i.mitigationTaskName && i.mitigationTargetDate)
                     ? `I'm recommending you to move ${i.mitigationTaskName} to ${toHumanDate(i.mitigationTargetDate)} to reduce the workload on ${toHumanDate(i.date)}.`
-                    : i.suggestion;
+                    : (i.suggestion || `You have ${(i.totalHours || 0).toFixed(1)} hours scheduled for ${toHumanDate(i.date)}. Please manually reschedule some tasks.`);
 
                   let estHours = 1.5;
                   const taskName = i.mitigationTaskName;
@@ -228,44 +228,6 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                       estimatedHours: estHours,
                   });
               }
-          });
-
-          // Also process overdue mitigations — past SAFE days skipped by busyInsights loop
-          const todayForOverdue = new Date(new Date().getTime() - (new Date().getTimezoneOffset() * 60000))
-            .toISOString().split("T")[0];
-          const overdueMits = (data.mitigations || []).filter(m => m.date < todayForOverdue);
-          overdueMits.forEach(mit => {
-            // Avoid duplicates (in case the past day was also BUSY)
-            const alreadyAdded = capacityAlerts.some(a => a.id === `overdue-${mit.date}-${mit.mitigationTaskName}`);
-            if (alreadyAdded) return;
-
-            let estHours = 1.5;
-            const matchedTask = freshTasks.find(t => normalizeName(t.name) === normalizeName(mit.mitigationTaskName));
-            if (matchedTask && updatedEstimates[matchedTask.id]) {
-              estHours = updatedEstimates[matchedTask.id];
-            } else if (updatedEstimates[mit.mitigationTaskName]) {
-              estHours = updatedEstimates[mit.mitigationTaskName];
-            }
-
-            capacityAlerts.push({
-              id: `overdue-${mit.date}-${mit.mitigationTaskName}`,
-              taskId: `overdue-${mit.date}-${mit.mitigationTaskName}`,
-              taskName: `Overdue on ${toHumanDate(mit.date)}`,
-              urgency: "CAPACITY_BUSY",
-              deadline: mit.date,
-              date: mit.date,
-              timestamp: new Date().toISOString(),
-              alertedAt: Date.now(),
-              read: false,
-              suggestion: mit.suggestion,
-              reason: mit.reason,
-              totalHours: 0,
-              status: "BUSY",
-              mitigationSuggestion: mit.suggestion,
-              mitigationTaskName: mit.mitigationTaskName,
-              mitigationTargetDate: mit.mitigationTargetDate,
-              estimatedHours: estHours,
-            });
           });
 
           localStorage.setItem("proactive_capacity_alerts", JSON.stringify({
@@ -425,7 +387,8 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
           };
 
           const activeTasks = tasks.filter(t => t.status?.toLowerCase() !== 'done' && t.deadline && t.deadline !== 'No Deadline');
-          const uniqueDates = [...new Set(activeTasks.map(t => normalizeDate(t.deadline!)))];
+          // Only show today-or-future dates as cards; overdue tasks are merged into today's card
+          const uniqueDates = [...new Set(activeTasks.map(t => normalizeDate(t.deadline!)).filter(d => d >= todayStr))];
           
           if (!uniqueDates.includes(todayStr)) {
             uniqueDates.push(todayStr);
@@ -520,12 +483,123 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                        <div className="w-1 h-3 bg-slate-200 rounded-full"></div>
                        Allocation Metrics
                     </div>
-                    {insight.taskInsights?.map((t, tidx) => (
-                      <div key={tidx} className="flex flex-col border-l border-slate-200 pl-3 py-0.5">
-                         <span className="text-xs font-semibold text-slate-700 truncate max-w-xs">{t.name}</span>
-                         <span className="text-[9px] font-bold text-slate-400 uppercase mt-0.5">Est. time: {t.estimatedHours}h</span>
-                      </div>
-                    ))}
+                      {(() => {
+                        const sortedTasks = [...(insight.taskInsights || [])].sort((a: any, b: any) => {
+                          const getTaskInfo = (t: any) => {
+                            let hasTime = false;
+                            let dateOnlyMs = Infinity;
+                            let timeMs = Infinity;
+                            let isPast = false;
+                            let isOverdue = !!t.isOverdue;
+
+                            if (t.originalDeadline) {
+                              const dl = t.originalDeadline;
+                              const parsed = new Date(dl);
+                              if (!isNaN(parsed.getTime())) {
+                                timeMs = parsed.getTime();
+                                // Get date without time for day-level comparison
+                                const dateOnly = new Date(parsed);
+                                dateOnly.setHours(0, 0, 0, 0);
+                                dateOnlyMs = dateOnly.getTime();
+
+                                const timeMatch = dl.match(/T(\d{2}):(\d{2})/);
+                                if (timeMatch) {
+                                  const h = parseInt(timeMatch[1], 10);
+                                  const m = parseInt(timeMatch[2], 10);
+                                  if (h !== 0 || m !== 0) {
+                                    hasTime = true;
+                                    if (!isOverdue && timeMs < Date.now()) {
+                                      isPast = true;
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                            return { isOverdue, isPast, hasTime, timeMs, dateOnlyMs };
+                          };
+
+                          const infoA = getTaskInfo(a);
+                          const infoB = getTaskInfo(b);
+
+                          const scoreA = infoA.isOverdue || infoA.isPast ? 2 : 1;
+                          const scoreB = infoB.isOverdue || infoB.isPast ? 2 : 1;
+
+                          // 1. Overdue/past tasks first
+                          if (scoreA !== scoreB) {
+                            return scoreB - scoreA;
+                          }
+                          
+                          // 2. Earliest date first (ignoring time)
+                          if (infoA.dateOnlyMs !== infoB.dateOnlyMs) {
+                            return infoA.dateOnlyMs - infoB.dateOnlyMs;
+                          }
+
+                          // 3. On the same day, tasks WITH a time come before tasks WITHOUT a time
+                          if (infoA.hasTime !== infoB.hasTime) {
+                            return infoA.hasTime ? -1 : 1;
+                          }
+
+                          // 4. Sort by time
+                          if (infoA.timeMs !== infoB.timeMs) {
+                            return infoA.timeMs - infoB.timeMs;
+                          }
+                          return 0;
+                        });
+
+                        return sortedTasks.map((t, tidx) => {
+                          const task = t as any;
+                          let dueTimeStr: string | null = null;
+                          let wasDueStr: string | null = null;
+                          let isTimePast = false;
+                          if (task.originalDeadline) {
+                            const dl: string = task.originalDeadline;
+                            const timeMatch = dl.match(/T(\d{2}):(\d{2})/);
+                            if (timeMatch) {
+                              const h = parseInt(timeMatch[1], 10);
+                              const m = parseInt(timeMatch[2], 10);
+                              if (h !== 0 || m !== 0) {
+                                const parsed = new Date(dl);
+                                if (!isNaN(parsed.getTime())) {
+                                  dueTimeStr = parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                                  if (!task.isOverdue && parsed.getTime() < Date.now()) {
+                                    isTimePast = true;
+                                  }
+                                }
+                              }
+                            }
+                            if (task.isOverdue) {
+                              const parsed = new Date(dl);
+                              if (!isNaN(parsed.getTime())) {
+                                wasDueStr = parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                              }
+                            }
+                          }
+                          return (
+                            <div key={tidx} className="flex flex-col border-l border-slate-200 pl-3 py-0.5">
+                               <div className="flex items-center gap-1.5 flex-wrap">
+                                 <span className="text-xs font-semibold text-slate-700 truncate max-w-xs">{t.name}</span>
+                                 {(task.isOverdue || isTimePast) && (
+                                   <span className="text-[8px] font-bold px-1 py-0.5 rounded bg-red-50 text-red-600 border border-red-100 uppercase tracking-wide shrink-0">Overdue</span>
+                                 )}
+                               </div>
+                                <div className="flex items-center gap-2.5 mt-0.5">
+                                  <span className="text-[9px] font-bold text-slate-400 uppercase">Est. time: {t.estimatedHours}h</span>
+                                  {(wasDueStr || dueTimeStr) && (
+                                    <span className={`text-[9px] font-medium whitespace-nowrap ${(wasDueStr || isTimePast) ? 'text-red-400' : 'text-slate-500'}`}>
+                                      {wasDueStr && dueTimeStr
+                                        ? `Was due ${wasDueStr} at ${dueTimeStr}`
+                                        : wasDueStr
+                                        ? `Was due ${wasDueStr}`
+                                        : isTimePast
+                                        ? `Was due at ${dueTimeStr}`
+                                        : `Due by ${dueTimeStr}`}
+                                    </span>
+                                  )}
+                                </div>
+                            </div>
+                          );
+                        });
+                      })()}
                     {(!insight.taskInsights || insight.taskInsights.length === 0) && (
                        <div className="text-xs text-slate-400 italic py-2 bg-slate-50 rounded text-center border border-dashed border-slate-200">
                           Zero Allocations

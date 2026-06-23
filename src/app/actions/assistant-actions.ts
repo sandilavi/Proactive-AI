@@ -1,5 +1,5 @@
 "use server";
-import { groq, GROQ_MODEL } from "@/lib/groq";
+import { groq, getGroqModel } from "@/lib/groq";
 import { fetchNotionTasks } from "./notion-actions";
 import { extractJSON, getUrgencyCategory, calculateDeadlineInfo, getUserLocalTime, normalizeStatus } from "@/lib/utils";
 
@@ -60,7 +60,7 @@ export async function processUserPrompt(prompt: string, taskContext: string, use
     : "";
 
   const response = await groq.chat.completions.create({
-    model: GROQ_MODEL,
+    model: await getGroqModel(),
     messages: [
       {
         role: "system",
@@ -123,7 +123,7 @@ export async function getAgentSuggestion(tasks: NotionTask[], userOffset: string
     .join("\n");
 
   const response = await groq.chat.completions.create({
-    model: GROQ_MODEL,
+    model: await getGroqModel(),
     temperature: 0,
     messages: [
       {

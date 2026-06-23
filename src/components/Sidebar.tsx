@@ -6,7 +6,8 @@ import {
   Brain, 
   LayoutDashboard, 
   LogOut,
-  Compass
+  Compass,
+  Settings
 } from 'lucide-react';
 
 export default function Sidebar() {
@@ -82,14 +83,37 @@ export default function Sidebar() {
       </nav>
 
       {/* Footer / Logout */}
-      <div className="p-4 border-t border-slate-200">
-        <Link 
-          href="/" 
-          className="flex items-center justify-center gap-2 w-full py-2.5 rounded bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 border border-slate-200 hover:border-rose-200 transition-colors text-xs font-semibold"
-        >
-          <LogOut size={14} className="text-slate-500" />
-          <span>LOGOUT</span>
-        </Link>
+      <div>
+        <div className="p-3">
+          <Link
+            href="/dashboard/settings"
+            className={`
+              flex items-center gap-3 px-3 py-2 rounded transition-colors
+              cursor-pointer text-xs font-semibold
+              ${pathname === '/dashboard/settings'
+                ? 'bg-slate-900 text-white' 
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+              }
+            `}
+          >
+            <Settings size={16} />
+            <div className="flex flex-col">
+              <span>Settings</span>
+              <span className={`text-[9px] font-normal leading-none mt-0.5 ${pathname === '/dashboard/settings' ? 'text-slate-300' : 'text-slate-400'}`}>
+                Model & Preferences
+              </span>
+            </div>
+          </Link>
+        </div>
+        <div className="p-4 border-t border-slate-200">
+          <Link 
+            href="/" 
+            className="flex items-center justify-center gap-2 w-full py-2.5 rounded bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 border border-slate-200 hover:border-rose-200 transition-colors text-xs font-semibold"
+          >
+            <LogOut size={14} className="text-slate-500" />
+            <span>LOGOUT</span>
+          </Link>
+        </div>
       </div>
     </aside>
   );

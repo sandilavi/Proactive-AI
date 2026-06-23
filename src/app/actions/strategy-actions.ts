@@ -1,5 +1,5 @@
 "use server";
-import { groq, GROQ_MODEL } from "@/lib/groq";
+import { groq, getGroqModel } from "@/lib/groq";
 import { NotionTask } from "./assistant-actions";
 import { extractJSON } from "@/lib/utils";
 
@@ -7,7 +7,7 @@ export interface CapacityInsight {
   date: string;
   totalHours: number;
   status: "SAFE" | "BUSY";
-  taskInsights?: Array<{ id: string; name: string; estimatedHours: number }>;
+  taskInsights?: Array<{ id: string; name: string; estimatedHours: number; isOverdue?: boolean; originalDeadline?: string }>;
   suggestion?: string;
   reason?: string;
   mitigationTaskName?: string;
@@ -72,7 +72,7 @@ export async function getCapacityInsights(
   }
 
   const timeKey = `${localNow.getHours()}`;
-  const taskFingerprint = `v10|${today}|${timeKey}|` + [...tasks]
+  const taskFingerprint = `v12|${today}|${timeKey}|` + [...tasks]
     .sort((a, b) => a.id.localeCompare(b.id))
     .map(t => {
       const cachedTime = taskEstimationCache.get(`${t.id}-${t.name}`);
@@ -134,7 +134,7 @@ async function runCapacityAnalysis(tasks: NotionTask[], userOffset: string): Pro
     const estPrompt = missingEstimations.map(t => `- ID: "${t.id}", Name: "${t.name}"`).join("\n");
     try {
       const response = await groq.chat.completions.create({
-        model: GROQ_MODEL,
+        model: await getGroqModel(),
         temperature: 0,
         messages: [
           { role: "system", content: "Estimate hours (0.5 to 8.0) for each task. Output strict JSON: { \"estimations\": [{ \"id\": \"task_id\", \"estimatedHours\": 2.5 }] }" },
@@ -185,7 +185,10 @@ async function runCapacityAnalysis(tasks: NotionTask[], userOffset: string): Pro
   insightsMap.set(todayStr, { date: todayStr, totalHours: 0, status: "SAFE", taskInsights: [] });
 
   activeTasks.forEach(t => {
-    const d = normalizeDate(t.deadline || todayStr);
+    const rawDate = normalizeDate(t.deadline || todayStr);
+    // Overdue tasks (past deadline) are merged into today — they need to be done ASAP
+    // and should count towards today's real workload instead of showing as separate past cards.
+    const d = rawDate < todayStr ? todayStr : rawDate;
     if (!insightsMap.has(d)) insightsMap.set(d, { date: d, totalHours: 0, status: "SAFE", taskInsights: [] });
     const day = insightsMap.get(d)!;
 
@@ -201,7 +204,7 @@ async function runCapacityAnalysis(tasks: NotionTask[], userOffset: string): Pro
     }
     const finalEst = est || 1.5;
 
-    day.taskInsights!.push({ id: t.id, name: t.name, estimatedHours: finalEst });
+    day.taskInsights!.push({ id: t.id, name: t.name, estimatedHours: finalEst, isOverdue: rawDate < todayStr, originalDeadline: t.deadline || undefined });
     day.totalHours += finalEst;
   });
 
@@ -215,24 +218,6 @@ async function runCapacityAnalysis(tasks: NotionTask[], userOffset: string): Pro
   let overallSummary = "Your schedule is perfectly balanced! No busy days detected.";
   const busyDays = insightsArray.filter(i => i.status === "BUSY");
 
-  // Phase 3.5: Overdue mitigations — tasks on PAST days (not BUSY, so skipped by mitigation AI)
-  // These need to be surfaced regardless of total hours since the day has already passed.
-  const overdueMitigations: Array<{
-    date: string; suggestion: string; reason: string;
-    mitigationTaskName: string; mitigationTargetDate: string;
-  }> = [];
-  const pastDays = insightsArray.filter(i => i.date < todayStr && i.status !== "BUSY");
-  pastDays.forEach(day => {
-    (day.taskInsights || []).forEach(task => {
-      overdueMitigations.push({
-        date: day.date,
-        suggestion: `"${task.name}" is overdue — I recommend rescheduling it to Today so it doesn't fall through the cracks.`,
-        reason: "This task's deadline has already passed but it is not yet completed. Rescheduling to today keeps it visible and actionable.",
-        mitigationTaskName: task.name,
-        mitigationTargetDate: todayStr,
-      });
-    });
-  });
 
   if (busyDays.length > 0) {
     overallSummary = "I detect some busy days. Let's proactively rebalance your workload.";
@@ -251,7 +236,7 @@ async function runCapacityAnalysis(tasks: NotionTask[], userOffset: string): Pro
 
     try {
       const mitResponse = await groq.chat.completions.create({
-        model: GROQ_MODEL,
+        model: await getGroqModel(),
         temperature: 0,
         messages: [
           {
@@ -290,7 +275,13 @@ async function runCapacityAnalysis(tasks: NotionTask[], userOffset: string): Pro
       };
 
       if (mitData) {
-        if (mitData.overallSummary) overallSummary = mitData.overallSummary.replace(/,?\s*\d{4}/g, "");
+        if (mitData.mitigations && mitData.mitigations.length > 0) {
+          if (mitData.overallSummary) overallSummary = mitData.overallSummary.replace(/,?\s*\d{4}/g, "");
+        } else {
+          // AI failed to provide mitigations despite busy days
+          overallSummary = "I detect some busy days. Please manually reschedule tasks to balance your workload.";
+        }
+        
         const formattedMitigations = (mitData.mitigations || []).map((mit: any) => {
           let cleanSuggestion = (mit.suggestion || "").replace(/,?\s*\d{4}/g, "");
           const isoRegex = /\d{4}-\d{2}-\d{2}/g;
@@ -325,15 +316,10 @@ async function runCapacityAnalysis(tasks: NotionTask[], userOffset: string): Pro
           overallSummary,
           knownEstimations: Object.fromEntries(taskEstimationCache),
           thinkContext,
-          mitigations: [...overdueMitigations, ...formattedMitigations]
+          mitigations: formattedMitigations
         };
       }
     } catch (e) { console.error("Mitigation failed", e); }
-  }
-
-  // No busy days — but still surface any overdue tasks
-  if (overdueMitigations.length > 0) {
-    overallSummary = "No overloaded days, but you have overdue tasks that need attention.";
   }
 
   return {
@@ -341,6 +327,6 @@ async function runCapacityAnalysis(tasks: NotionTask[], userOffset: string): Pro
     overallSummary,
     knownEstimations: Object.fromEntries(taskEstimationCache),
     thinkContext,
-    mitigations: overdueMitigations
+    mitigations: []
   };
 }

@@ -1,5 +1,5 @@
 "use server";
-import { groq, GROQ_MODEL } from "@/lib/groq";
+import { groq, getGroqModel } from "@/lib/groq";
 import { NotionTask } from "./assistant-actions";
 import { extractJSON } from "@/lib/utils";
 import { getCapacityInsights } from "./strategy-actions";
@@ -38,7 +38,7 @@ export async function generateHorizonRoadmap(goalPrompt: string): Promise<Horizo
   const dayName = now.toLocaleDateString('en-US', { weekday: 'long' });
 
   const response = await groq.chat.completions.create({
-    model: GROQ_MODEL,
+    model: await getGroqModel(),
     temperature: 0,
     messages: [
       {

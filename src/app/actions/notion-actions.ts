@@ -123,8 +123,12 @@ export async function updateNotionTask(taskId: string, statusName?: string, date
     let dateProp = propNames?.date || "Date";
     let statusType: "status" | "select" = propTypes?.status || "status";
 
-    if (!propNames || !propTypes) {
-      const page: any = await notion.pages.retrieve({ page_id: taskId });
+    let page: any = null;
+    if (!propNames || !propTypes || (date && date.length === 10)) {
+      page = await notion.pages.retrieve({ page_id: taskId });
+    }
+
+    if (page && (!propNames || !propTypes)) {
       const dbId = page.parent?.database_id;
       if (dbId) {
         const dbs = await discoverDatabases();
@@ -137,11 +141,20 @@ export async function updateNotionTask(taskId: string, statusName?: string, date
       }
     }
 
+    let targetDateValue = date;
+    if (date && date.length === 10 && page) {
+      const currentDeadline = page.properties[dateProp]?.date?.start;
+      if (currentDeadline && currentDeadline.includes("T")) {
+        const timePart = currentDeadline.substring(10);
+        targetDateValue = date + timePart;
+      }
+    }
+
     const response = await notion.pages.update({
       page_id: taskId,
       properties: {
         ...(statusName && { [statusProp]: { [statusType]: { name: statusName } } as any }),
-        ...(date && { [dateProp]: { date: { start: date } } }),
+        ...(targetDateValue && { [dateProp]: { date: { start: targetDateValue } } }),
       },
     });
 

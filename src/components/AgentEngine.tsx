@@ -442,41 +442,6 @@ export default function AgentEngine() {
                     }
                 });
 
-                // Also process overdue mitigations — past SAFE days are skipped by results.forEach
-                const overdueMits = (report.mitigations || []).filter(m => m.date < today);
-                overdueMits.forEach(mit => {
-                  const alreadyAdded = capacityAlerts.some(a => a.id === `overdue-${mit.date}-${mit.mitigationTaskName}`);
-                  if (alreadyAdded) return;
-
-                  let estHours = 1.5;
-                  const matchedTask = freshTasks.find(t => normalizeName(t.name) === normalizeName(mit.mitigationTaskName));
-                  if (matchedTask && updatedEstimates[matchedTask.id]) {
-                    estHours = updatedEstimates[matchedTask.id];
-                  } else if (updatedEstimates[mit.mitigationTaskName]) {
-                    estHours = updatedEstimates[mit.mitigationTaskName];
-                  }
-
-                  capacityAlerts.push({
-                    id: `overdue-${mit.date}-${mit.mitigationTaskName}`,
-                    taskId: `overdue-${mit.date}-${mit.mitigationTaskName}`,
-                    taskName: `Overdue on ${toHumanDate(mit.date)}`,
-                    urgency: "CAPACITY_BUSY",
-                    deadline: mit.date,
-                    date: mit.date,
-                    timestamp: new Date().toISOString(),
-                    alertedAt: Date.now(),
-                    read: false,
-                    suggestion: mit.suggestion,
-                    reason: mit.reason,
-                    totalHours: 0,
-                    status: "BUSY",
-                    mitigationSuggestion: mit.suggestion,
-                    mitigationTaskName: mit.mitigationTaskName,
-                    mitigationTargetDate: mit.mitigationTargetDate,
-                    estimatedHours: estHours,
-                  } as any);
-                });
-
                 const filteredCapacityAlerts = capacityAlerts.filter(a => {
                     if (!a.mitigationTaskName || !a.mitigationTargetDate) return true;
                     const key = `${a.mitigationTaskName}|${a.date}|${a.mitigationTargetDate}`;
