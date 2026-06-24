@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { groq, GROQ_MODEL } from "@/lib/groq";
+import { groq, getGroqModel } from "@/lib/groq";
 
 export async function POST(req: NextRequest) {
     try {
@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
         }
 
         const response = await groq.chat.completions.create({
-            model: GROQ_MODEL,
+            model: await getGroqModel(),
             messages: [{ role: "user", content: message }],
         });
 

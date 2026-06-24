@@ -8,7 +8,7 @@ interface NotionPage {
   properties: Record<string, any>;
 }
 
-// 1. Discover databases in real-time
+// Discover databases in real-time
 // Removing unstable_cache for zero-refresh development experience
 export async function discoverDatabases(): Promise<NotionDatabase[]> {
   return rawDiscoverDatabases();
@@ -56,7 +56,7 @@ export const fetchNotionTasks = cache(
           console.error(`Notion Fetch Error for "${db.name}":`, e);
 
           // NEW: Nuclear Cache Buster
-          // If the DB was deleted in Notion, we MUST invalidate the discovery cache
+          // Invalidate the discovery cache if the DB was deleted in Notion
           if (e?.status === 404 || e?.message?.includes('Could not find database')) {
             revalidatePath('/', 'layout');
           }
@@ -84,7 +84,7 @@ export const fetchNotionTasks = cache(
   }
 );
 
-// CREATE a task
+// Create a task
 export async function createNotionTask(title: string, statusName: string, date?: string, databaseId?: string) {
   const dbs = await discoverDatabases();
   const targetDb = databaseId ? dbs.find(db => db.id === databaseId) : dbs[0];
@@ -116,15 +116,19 @@ export async function createNotionTask(title: string, statusName: string, date?:
   }
 }
 
-// UPDATE a task
+// Update a task
 export async function updateNotionTask(taskId: string, statusName?: string, date?: string, propNames?: { status: string; date: string }, propTypes?: { status: "status" | "select" }) {
   try {
     let statusProp = propNames?.status || "Status";
     let dateProp = propNames?.date || "Date";
     let statusType: "status" | "select" = propTypes?.status || "status";
 
-    if (!propNames || !propTypes) {
-      const page: any = await notion.pages.retrieve({ page_id: taskId });
+    let page: any = null;
+    if (!propNames || !propTypes || (date && date.length === 10)) {
+      page = await notion.pages.retrieve({ page_id: taskId });
+    }
+
+    if (page && (!propNames || !propTypes)) {
       const dbId = page.parent?.database_id;
       if (dbId) {
         const dbs = await discoverDatabases();
@@ -137,11 +141,20 @@ export async function updateNotionTask(taskId: string, statusName?: string, date
       }
     }
 
+    let targetDateValue = date;
+    if (date && date.length === 10 && page) {
+      const currentDeadline = page.properties[dateProp]?.date?.start;
+      if (currentDeadline && currentDeadline.includes("T")) {
+        const timePart = currentDeadline.substring(10);
+        targetDateValue = date + timePart;
+      }
+    }
+
     const response = await notion.pages.update({
       page_id: taskId,
       properties: {
         ...(statusName && { [statusProp]: { [statusType]: { name: statusName } } as any }),
-        ...(date && { [dateProp]: { date: { start: date } } }),
+        ...(targetDateValue && { [dateProp]: { date: { start: targetDateValue } } }),
       },
     });
 
@@ -154,7 +167,7 @@ export async function updateNotionTask(taskId: string, statusName?: string, date
   }
 }
 
-// DELETE a task
+// Delete a task
 export async function deleteNotionTask(taskId: string) {
   try {
     const response = await notion.pages.update({
@@ -171,12 +184,12 @@ export async function deleteNotionTask(taskId: string) {
   }
 }
 
-// BATCH CREATE tasks from Horizon
-export async function batchCreateNotionTasks(tasks: { title: string; date: string }[]) {
+// Batch create tasks from Horizon
+export async function batchCreateNotionTasks(tasks: { title: string; date: string }[], targetDbId?: string) {
   const dbs = await discoverDatabases();
-  const targetDb = dbs[0];
+  const targetDb = targetDbId ? dbs.find(db => db.id === targetDbId) : dbs[0];
 
-  if (!targetDb) return { success: false, error: "No Notion database found." };
+  if (!targetDb) return { success: false, error: "No Notion database found or specified database not found." };
 
   try {
     const results = await Promise.all(

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { executeUserPrompt } from "@/app/actions/agent-actions";
+import { executeUserPrompt } from "@/app/actions/assistant-actions";
 
 export async function POST(req: NextRequest) {
   try {

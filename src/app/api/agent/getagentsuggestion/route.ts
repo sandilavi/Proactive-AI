@@ -1,4 +1,4 @@
-import { getAgentSuggestion } from "@/app/actions/agent-actions";
+import { getAgentSuggestion } from "@/app/actions/assistant-actions";
 import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {

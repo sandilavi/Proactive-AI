@@ -1,16 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { performNotionCRUD } from "@/app/actions/agent-actions";
+import { performNotionCRUD } from "@/app/actions/assistant-actions";
 
 export async function POST(req: NextRequest) {
   try {
     const { action, data } = await req.json();
 
-    // 1. Basic Validation
+    // Basic Validation
     if (!action) {
       return NextResponse.json({ error: "Action is required (e.g., CREATE, UPDATE, DELETE)" }, { status: 400 });
     }
 
-    // 2. Execute the CRUD operation directly
+    // Execute the CRUD operation directly
     const result = await performNotionCRUD(action, data);
 
     return NextResponse.json({

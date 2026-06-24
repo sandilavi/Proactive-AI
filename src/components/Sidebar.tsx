@@ -6,7 +6,8 @@ import {
   Brain, 
   LayoutDashboard, 
   LogOut,
-  Compass
+  Compass,
+  Settings
 } from 'lucide-react';
 
 export default function Sidebar() {
@@ -34,27 +35,24 @@ export default function Sidebar() {
   ];
 
   return (
-    <aside className="w-64 h-screen bg-white/80 backdrop-blur-3xl border-r border-slate-100/60 flex flex-col sticky top-0 shadow-[20px_0_40px_-15px_rgba(0,0,0,0.02)] overflow-hidden">
-      {/* Brand: Industrial High-End */}
-      <div className="p-8">
-        <Link href="/dashboard" className="flex items-center gap-3 group">
-          <div className="relative flex-shrink-0">
-             {/* Logo Container: Removed redundant padding/BG because icon.png is already circular */}
-             <div className="w-12 h-12 flex items-center justify-center transition-all duration-500 group-hover:scale-110 overflow-hidden">
-                <img src="/icon.png" alt="ProActiveAI" className="w-full h-full object-contain relative z-10 rotate-0 group-hover:rotate-[360deg] transition-transform duration-1000" />
-             </div>
+    <aside className="w-60 h-screen bg-white border-r border-slate-200 flex flex-col sticky top-0 overflow-hidden">
+      {/* Brand */}
+      <div className="p-6">
+        <Link href="/dashboard" className="flex items-center gap-3">
+          <div className="w-10 h-10 flex items-center justify-center flex-shrink-0">
+             <img src="/icon.png" alt="ProActiveAI" className="w-8 h-8 object-contain" />
           </div>
           <div className="flex flex-col">
-             <span className="text-xl font-black text-slate-900 tracking-tighter leading-none">
-               ProActive<span className="text-blue-600">AI</span>
+             <span className="text-lg font-bold text-slate-900 tracking-tight leading-none">
+               ProActiveAI
              </span>
-             <span className="text-[8px] font-black uppercase tracking-[0.3em] text-slate-400 mt-0.5">Command Center</span>
+             <span className="text-[9px] uppercase tracking-wider text-slate-400 mt-1">Command Center</span>
           </div>
         </Link>
       </div>
 
-      {/* Main Nav: Precision Nodes */}
-      <nav className="flex-1 px-4 space-y-2 overflow-y-auto scrollbar-hide py-2">
+      {/* Main Nav */}
+      <nav className="flex-grow px-3 space-y-1 py-2">
         {navItems.map((item) => {
           const isActive = pathname === item.href;
           const Icon = item.icon;
@@ -64,27 +62,19 @@ export default function Sidebar() {
               key={item.name}
               href={item.href}
               className={`
-                group relative flex items-center gap-4 px-4 py-3 rounded-[1.25rem] transition-all duration-500
-                cursor-pointer
+                flex items-center gap-3 px-3 py-2 rounded transition-colors
+                cursor-pointer text-xs font-semibold
                 ${isActive 
-                  ? 'bg-blue-600 text-white shadow-xl translate-x-1' 
-                  : 'text-slate-500 hover:bg-slate-50/80 hover:text-slate-900 hover:translate-x-1'
+                  ? 'bg-slate-900 text-white' 
+                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                 }
               `}
             >
-
-              <div className={`
-                relative z-10 p-2.5 rounded-[0.8rem] transition-all duration-500
-                ${isActive ? 'bg-white/20' : 'bg-slate-50 group-hover:bg-white group-hover:shadow-sm'}
-              `}>
-                <Icon size={18} className={isActive ? 'text-white' : 'text-slate-500 group-hover:text-blue-600'} />
-              </div>
-              <div className="relative z-10 flex flex-col">
-                <span className={`text-sm font-black tracking-tight ${isActive ? 'text-white' : 'text-slate-800'}`}>
-                   {item.name}
-                </span>
-                <span className={`text-[9px] font-bold uppercase tracking-widest opacity-60 leading-tight mt-0.5 ${isActive ? 'text-blue-100' : 'text-slate-400'}`}>
-                   {item.description}
+              <Icon size={16} />
+              <div className="flex flex-col">
+                <span>{item.name}</span>
+                <span className={`text-[9px] font-normal leading-none mt-0.5 ${isActive ? 'text-slate-300' : 'text-slate-400'}`}>
+                  {item.description}
                 </span>
               </div>
             </Link>
@@ -92,15 +82,38 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* Footer / Logout: Balanced & Subtle */}
-      <div className="p-4 mt-auto border-t border-slate-50/80 bg-white/50 backdrop-blur-md">
-        <Link 
-          href="/" 
-          className="flex items-center justify-center gap-3 w-full py-4 rounded-[1.5rem] bg-slate-50 hover:bg-rose-50 text-slate-500 hover:text-rose-600 border border-slate-100 hover:border-rose-100 transition-all duration-300 group cursor-pointer"
-        >
-          <LogOut size={18} strokeWidth={3} className="text-slate-400 group-hover:text-rose-500 transition-all" />
-          <span className="text-[12px] font-black uppercase tracking-[0.2em]">Logout</span>
-        </Link>
+      {/* Footer / Logout */}
+      <div>
+        <div className="p-3">
+          <Link
+            href="/dashboard/settings"
+            className={`
+              flex items-center gap-3 px-3 py-2 rounded transition-colors
+              cursor-pointer text-xs font-semibold
+              ${pathname === '/dashboard/settings'
+                ? 'bg-slate-900 text-white' 
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+              }
+            `}
+          >
+            <Settings size={16} />
+            <div className="flex flex-col">
+              <span>Settings</span>
+              <span className={`text-[9px] font-normal leading-none mt-0.5 ${pathname === '/dashboard/settings' ? 'text-slate-300' : 'text-slate-400'}`}>
+                Model & Preferences
+              </span>
+            </div>
+          </Link>
+        </div>
+        <div className="p-4 border-t border-slate-200">
+          <Link 
+            href="/" 
+            className="flex items-center justify-center gap-2 w-full py-2.5 rounded bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 border border-slate-200 hover:border-rose-200 transition-colors text-xs font-semibold"
+          >
+            <LogOut size={14} className="text-slate-500" />
+            <span>LOGOUT</span>
+          </Link>
+        </div>
       </div>
     </aside>
   );

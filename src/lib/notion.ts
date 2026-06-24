@@ -23,30 +23,26 @@ export async function discoverDatabases(): Promise<NotionDatabase[]> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const response: any = await notion.search({});
 
-    const validDatabases: NotionDatabase[] = [];
-
-    for (const db of response.results) {
+    const databasePromises = response.results.map(async (db: any) => {
         const type = db.object;
         const id = db.id;
 
         let dbName = "";
 
         // 1. Try to get title from standard database title array
-        if ((db as any).title && Array.isArray((db as any).title) && (db as any).title.length > 0) {
-            dbName = (db as any).title.map((t: any) => t.plain_text).join("");
+        if (db.title && Array.isArray(db.title) && db.title.length > 0) {
+            dbName = db.title.map((t: any) => t.plain_text).join("");
         }
 
         // 2. Fallback for data_source objects which might just have a .name property
-        if (!dbName && (db as any).name) {
-            dbName = (db as any).name;
+        if (!dbName && db.name) {
+            dbName = db.name;
         }
 
         // 3. Fallback for properties inside data_source (if search doesn't extract it)
         if (!dbName) {
             dbName = "Untitled " + (type === "database" ? "Database" : "Data Source");
         }
-
-        // console.log(`[Discovery] Found ${type}: "${dbName}" (${id})`);
 
         if (type === "data_source" || type === "database") {
             try {
@@ -60,8 +56,6 @@ export async function discoverDatabases(): Promise<NotionDatabase[]> {
                 let statusType: "status" | "select" = "status";
                 let dateName = "";
 
-                const propTypes = Object.entries(props).map(([n, p]: [string, any]) => `${n}:${p.type}`);
-
                 for (const [name, prop] of Object.entries(props)) {
                     const p = prop as any;
                     if (p.type === "title") titleName = name;
@@ -74,26 +68,23 @@ export async function discoverDatabases(): Promise<NotionDatabase[]> {
                 }
 
                 if (titleName && statusName && dateName) {
-                    validDatabases.push({
+                    return {
                         id,
                         name: dbName,
                         dataSourceId: type === "data_source" ? id : undefined,
                         propNames: { title: titleName, status: statusName, date: dateName },
                         propTypes: { status: statusType }
-                    });
-                } else {
-                    const missing = [];
-                    if (!titleName) missing.push("Title property");
-                    if (!statusName) missing.push("Status/Select property");
-                    if (!dateName) missing.push("Date property");
+                    };
                 }
             } catch (err) {
                 console.error(`[Discovery]   ❌ Error retrieving details for ${dbName}:`, err);
             }
         }
-    }
+        return null;
+    });
 
-    return validDatabases;
+    const results = await Promise.all(databasePromises);
+    return results.filter((db): db is NotionDatabase => db !== null);
 }
 
 // Fetch raw tasks using either data_source_id (if exists) or standard database_id
