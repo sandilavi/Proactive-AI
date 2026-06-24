@@ -135,7 +135,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
         return;
       }
 
-      // Handle Caching: Don't re-fetch if we have a fresh one AND tasks haven't changed
+      // Handle Caching: Skip re-fetch if data is fresh and tasks haven't changed
       const cached = localStorage.getItem("proactive_auto_suggestion");
       const lastFetch = localStorage.getItem("proactive_last_fetch");
       const lastFingerprint = localStorage.getItem("proactive_task_fingerprint");
@@ -148,7 +148,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
       const isSameDay = lastFetchDay === todayStr;
       
       // Logic: Only re-fetch if tasks changed OR it's a new day (past midnight).
-      // Also force re-fetch if we're missing the 'deadline' field (schema upgrade).
+      // Force re-fetch if the 'deadline' field is missing (schema upgrade).
       if (cached && isTaskListSame && isSameDay) {
         try {
           const parsed = JSON.parse(cached);
@@ -161,7 +161,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
             return;
           }
         } catch {
-          // If parse fails, we continue to fetch a fresh one
+          // Fallback to fetch a fresh one if parse fails
         }
       }
 
@@ -608,7 +608,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                      )}
 
                      {/* General Action Details */}
-                     {pendingDecision.action !== "PLAN" && (
+                     {(pendingDecision.action === "UPDATE" || pendingDecision.action === "CREATE") && (
                          <div className="p-3 bg-white border border-slate-200 rounded flex flex-col gap-2">
                            {pendingDecision.action === "UPDATE" && (
                              <>
@@ -642,8 +642,22 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                                 </div>
                                  <div className="flex items-center justify-between border-t border-slate-100 pt-1.5">
                                    <span className="text-xs text-slate-500">Scheduled Date</span>
-                                   <span className="text-xs font-bold text-slate-800">{pendingDecision.data.date ? formatDeadline(pendingDecision.data.date) : "Immediate"}</span>
+                                   <span className="text-xs font-bold text-slate-800">{pendingDecision.data.date ? formatDeadline(pendingDecision.data.date) : "No Deadline"}</span>
                                 </div>
+                                {databases && databases.length > 0 && (
+                                  <div className="flex items-center justify-between border-t border-slate-100 pt-1.5">
+                                    <span className="text-xs text-slate-500">Target Database</span>
+                                    <select
+                                      value={pendingDecision.data.targetDatabase || databases[0]?.name}
+                                      onChange={(e) => setPendingDecision(prev => prev ? { ...prev, data: { ...prev.data, targetDatabase: e.target.value } } : null)}
+                                      className="text-xs font-bold text-slate-800 bg-slate-50 border border-slate-200 rounded px-2 py-1 outline-none focus:border-slate-400 cursor-pointer text-left max-w-[160px] truncate"
+                                    >
+                                      {databases.map(db => (
+                                        <option key={db.id} value={db.name}>{db.name}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                )}
                               </div>
                            )}
                         </div>

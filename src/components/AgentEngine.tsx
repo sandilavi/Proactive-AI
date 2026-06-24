@@ -89,7 +89,7 @@ export default function AgentEngine() {
         const now = new Date();
         // USE LOCAL ISO STRING: Ensures 'today' rolls over at the user's actual midnight, not UTC's.
         const today = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
-        // Load the latest active toasts from localStorage to ensure we are in sync with user dismissals/clears
+        // Load the latest active toasts from localStorage to sync with user dismissals/clears
         const storedToasts = typeof window !== "undefined" ? localStorage.getItem("proactive_active_toasts") : null;
         const prevToasts = storedToasts ? (JSON.parse(storedToasts) as ProactiveAlert[]) : [];
         activeToastsRef.current = prevToasts;
@@ -159,13 +159,13 @@ export default function AgentEngine() {
 
             const currentUrgency = urgency; // Narrowing for TS safety
 
-            // CHECK: Did we already alert the user at this level OR a more critical level?
+            // Check if user was already alerted at this level or a more critical level
             if (existingAlert) {
               const oldRank = urgencyRank[existingAlert.urgency];
               const newRank = urgencyRank[currentUrgency];
               
               if (newRank < oldRank || (existingAlert.urgency === "OVERDUE" && currentUrgency === "TODAY")) {
-                // Task became MORE critical (e.g. Tomorrow -> Today) OR we are performing a Correction (Overdue -> Today)
+                // Task became more critical (e.g. Tomorrow -> Today) or a correction is performed (Overdue -> Today)
                 isFreshAlert = true;
                 // Generate a NEW ID to trigger a "NEW" badge and fresh notification
                 alertedMs = Date.now();
@@ -322,7 +322,7 @@ export default function AgentEngine() {
               try {
                 const parsed = JSON.parse(strategyRawReport) as CapacityReport;
                 // VALIDATION: Reject cached report if busy days exist but have NO busy-day mitigations
-                // NOTE: overdue mitigations don't count — we need the AI to have suggested moves for busy days specifically
+                // Note: Overdue mitigations are ignored; the AI must suggest moves for busy days specifically
                 const busyDayDates = new Set(
                   (parsed.insights || []).filter(i => (i.totalHours || 0) >= 10 || i.status === "BUSY").map(i => i.date)
                 );
@@ -477,7 +477,7 @@ export default function AgentEngine() {
                 }
 
                 // --- GARBAGE COLLECTION ---
-                // We use a "Grace Period" (24h) to prevent re-calculation if a task is briefly marked Done and then reverted.
+                // A 24h grace period prevents re-calculation if a task is briefly marked Done and then reverted.
                 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
                 const activeTaskIds = new Set(freshTasks.map(t => t.id));
                 const activeTaskNames = new Set(freshTasks.map(t => t.name));
@@ -523,7 +523,7 @@ export default function AgentEngine() {
                   .sort()
                   .join("|");
 
-                // CRITICAL: Only update the 'updatedAt' timestamp if we actually HAVE alerts to show.
+                // Critical: Only update the 'updatedAt' timestamp if there are alerts to show.
                 // This prevents "Ghost Notifications" from appearing when there's nothing to see.
                 const lastData = JSON.parse(localStorage.getItem("proactive_capacity_alerts") || "{}");
                 const hasNewAlerts = filteredCapacityAlerts.length > 0;

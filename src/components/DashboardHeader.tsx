@@ -1,7 +1,7 @@
 "use client";
 import React, { useState, useEffect, useCallback } from 'react';
 import { usePathname } from 'next/navigation';
-import { Bell, BellRing, Clock, X, Brain, Target, Zap, Check, Loader2, RefreshCw } from 'lucide-react';
+import { Bell, BellRing, Clock, X, Brain, Target, Zap, Check, Loader2 } from 'lucide-react';
 import { updateNotionTask, fetchNotionTasks } from "@/app/actions/notion-actions";
 
 const normalizeName = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -70,30 +70,6 @@ export default function DashboardHeader() {
   const [mitigationStates, setMitigationStates] = useState<Record<string, 'idle' | 'loading' | 'done' | 'rejected'>>({});
   const [resolutionShield, setResolutionShield] = useState<Record<string, number>>({});
   const [hasRejectedAll, setHasRejectedAll] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-
-  const handleForceRefresh = () => {
-    setIsRefreshing(true);
-    // Clear all capacity-related caches so the next AgentEngine cycle runs a fresh AI analysis
-    const keysToRemove = [
-      "proactive_capacity_full_report",
-      "proactive_capacity_fingerprint_strategy",
-      "proactive_capacity_last_day_strategy",
-      "proactive_capacity_alerts",
-      "proactive_capacity_fingerprint",
-      "proactive_last_capacity_read_timestamp",
-      "proactive_rejected_moves", // clear old dismissals so fresh suggestions are visible
-    ];
-    keysToRemove.forEach(k => localStorage.removeItem(k));
-    setCapacityData(null);
-    setHasOverload(false);
-    setHasRejectedAll(false);
-    setUnreadCapacityCount(0);
-    // Tell AgentEngine to re-run immediately
-    window.dispatchEvent(new Event('force-agent-refresh'));
-    window.dispatchEvent(new Event('capacity-alerts-updated'));
-    setTimeout(() => setIsRefreshing(false), 2500);
-  };
 
   const handleAcceptMitigation = useCallback(async (alertId: string, taskName: string, targetDate: string) => {
     setMitigationStates(prev => ({ ...prev, [alertId]: 'loading' }));
@@ -271,21 +247,6 @@ export default function DashboardHeader() {
       {/* Right: Notification Hub */}
       <div className="flex items-center gap-3 relative">
         
-        {/* Force Refresh Button */}
-        <button
-          id="force-refresh-capacity"
-          onClick={handleForceRefresh}
-          disabled={isRefreshing}
-          title="Force refresh capacity analysis"
-          className={`p-2 rounded border cursor-pointer flex items-center justify-center transition-all ${
-            isRefreshing
-              ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
-              : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50 hover:text-slate-700"
-          }`}
-        >
-          <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} />
-        </button>
-
         {/* Hub 1: Capacity Alerts */}
         <div className="relative">
           <button
@@ -318,7 +279,7 @@ export default function DashboardHeader() {
                     <div className="py-8 text-center">
                        <Target className="text-slate-300 mx-auto mb-2" size={32} />
                        <p className="text-xs font-semibold text-slate-500">
-                         {hasRejectedAll ? "Suggestions dismissed" : "Schedule balanced"}
+                         {hasRejectedAll ? "Suggestions dismissed" : (capacityData?.summary || "Schedule balanced")}
                        </p>
                     </div>
                   ) : (

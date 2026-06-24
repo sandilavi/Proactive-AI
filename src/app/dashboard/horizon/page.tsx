@@ -1,8 +1,11 @@
 import HorizonView from "../../../components/HorizonView";
+import { discoverDatabases } from "@/app/actions/notion-actions";
 
 export const dynamic = 'force-dynamic';
 
 export default async function HorizonPage() {
+  const databases = await discoverDatabases();
+  
   return (
     <div className="space-y-6">
       <div className="space-y-1">
@@ -13,7 +16,7 @@ export default async function HorizonPage() {
         <p className="text-xs text-slate-500">Break down project goals into a daily actionable roadmap.</p>
       </div>
 
-      <HorizonView />
+      <HorizonView databases={databases} />
     </div>
   );
 }

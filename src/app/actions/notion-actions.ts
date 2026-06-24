@@ -56,7 +56,7 @@ export const fetchNotionTasks = cache(
           console.error(`Notion Fetch Error for "${db.name}":`, e);
 
           // NEW: Nuclear Cache Buster
-          // If the DB was deleted in Notion, we MUST invalidate the discovery cache
+          // Invalidate the discovery cache if the DB was deleted in Notion
           if (e?.status === 404 || e?.message?.includes('Could not find database')) {
             revalidatePath('/', 'layout');
           }
@@ -185,11 +185,11 @@ export async function deleteNotionTask(taskId: string) {
 }
 
 // Batch create tasks from Horizon
-export async function batchCreateNotionTasks(tasks: { title: string; date: string }[]) {
+export async function batchCreateNotionTasks(tasks: { title: string; date: string }[], targetDbId?: string) {
   const dbs = await discoverDatabases();
-  const targetDb = dbs[0];
+  const targetDb = targetDbId ? dbs.find(db => db.id === targetDbId) : dbs[0];
 
-  if (!targetDb) return { success: false, error: "No Notion database found." };
+  if (!targetDb) return { success: false, error: "No Notion database found or specified database not found." };
 
   try {
     const results = await Promise.all(

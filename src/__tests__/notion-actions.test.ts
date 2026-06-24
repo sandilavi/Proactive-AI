@@ -1,4 +1,4 @@
-import { fetchNotionTasks } from '../notion-actions';
+import { fetchNotionTasks } from '../app/actions/notion-actions';
 import * as notionLib from '@/lib/notion'; // mock this
 
 // Mocking the external dependencies

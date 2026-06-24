@@ -14,13 +14,16 @@ export interface HorizonTaskEntry {
 export interface HorizonRoadmap {
   projectTitle: string;
   summary: string;
+  targetDbId?: string;
   tasks: HorizonTaskEntry[];
   thinkContext?: string;
 }
 
 export async function generateHorizonRoadmap(goalPrompt: string): Promise<HorizonRoadmap> {
-  const { fetchNotionTasks } = await import("./notion-actions");
+  const { fetchNotionTasks, discoverDatabases } = await import("./notion-actions");
   const freshTasks = await fetchNotionTasks();
+  const dbs = await discoverDatabases();
+  const dbContext = dbs.map(db => `- "${db.name}" (ID: ${db.id})`).join("\n");
 
   const now = new Date();
   const offsetMinutes = -now.getTimezoneOffset();
@@ -50,17 +53,22 @@ export async function generateHorizonRoadmap(goalPrompt: string): Promise<Horizo
         
         USER'S CURRENT WORKLOAD (FROM OTHER PROJECTS):
         ${capacityContext}
+
+        AVAILABLE DATABASES:
+        ${dbContext}
         
         PLANNING RULES:
         1. STRATEGIC SEQUENCING: Prioritize your REAL-WORLD availability. Look at the CURRENT WORKLOAD above before assigning tasks.
         2. SMART AVOIDANCE: If a date is labeled "BUSY" (meaning it has >= 10 hours of work), DO NOT schedule new tasks on that day. Skip it and find the next available day with < 7 hours of existing work to ensure you don't instantly make it "BUSY".
         3. HARD CAP: Ensure the NEW roadmap tasks + EXISTING workload never exceed 10 hours total for any single day.
         4. ROADMAP STRUCTURE: Generate 4 - 8 subtasks that logically complete the goal.
+        5. TARGET DATABASE: Pick the most logical database from AVAILABLE DATABASES to store this project, or omit if none match perfectly.
         
         OUTPUT strict JSON schema:
         {
           "projectTitle": "String",
           "summary": "String",
+          "targetDbId": "String (Database ID) or omitted",
           "tasks": [
             { "date": "YYYY-MM-DD", "title": "String", "durationHours": Number, "reason": "Reason referencing the capacity availability" }
           ]

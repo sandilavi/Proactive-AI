@@ -14,13 +14,23 @@ import {
 import { generateHorizonRoadmap, HorizonRoadmap } from "@/app/actions/horizon-actions";
 import { batchCreateNotionTasks } from "@/app/actions/notion-actions";
 
-export default function HorizonView() {
+interface NotionDatabase {
+  id: string;
+  name: string;
+}
+
+interface HorizonViewProps {
+  databases?: NotionDatabase[];
+}
+
+export default function HorizonView({ databases = [] }: HorizonViewProps) {
   const [goal, setGoal] = useState("");
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [roadmap, setRoadmap] = useState<HorizonRoadmap | null>(null);
   const [thinkOpen, setThinkOpen] = useState(false);
   const [syncSuccess, setSyncSuccess] = useState(false);
+  const [targetDbId, setTargetDbId] = useState<string>(databases[0]?.id || "");
 
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,6 +41,10 @@ export default function HorizonView() {
     try {
       const data = await generateHorizonRoadmap(goal);
       setRoadmap(data);
+      if (data.targetDbId) {
+        setTargetDbId(data.targetDbId);
+      }
+      setGoal("");
     } catch (err) {
       console.error("Horizon Generation Error:", err);
     } finally {
@@ -46,7 +60,7 @@ export default function HorizonView() {
         title: t.title,
         date: t.date
       }));
-      const res = await batchCreateNotionTasks(tasksToSync);
+      const res = await batchCreateNotionTasks(tasksToSync, targetDbId || databases[0]?.id);
       if (res.success) {
         setSyncSuccess(true);
       } else {
@@ -190,27 +204,55 @@ export default function HorizonView() {
              </div>
            </div>
            
-           <div className="pt-4 text-center">
-               <button 
-                 onClick={handleExport}
-                 disabled={syncing || syncSuccess}
-                 className={`inline-flex items-center gap-2 px-6 py-3 rounded font-bold uppercase tracking-wider transition-colors border text-xs cursor-pointer disabled:cursor-not-allowed ${syncSuccess ? "bg-emerald-50 text-emerald-600 border-emerald-100" : "bg-slate-900 text-white border-slate-800 hover:bg-slate-800 active:scale-95"}`}
-               >
-                 {syncing ? (
-                    <Loader2 size={12} className="animate-spin text-blue-400" />
-                 ) : syncSuccess ? (
-                    <div className="flex items-center gap-1.5">
-                       <Check size={12} strokeWidth={3} />
-                       <span>Export Complete</span>
-                    </div>
-                 ) : (
-                    <div className="flex items-center gap-1.5">
-                       <span>Deploy Blueprint to Notion</span>
-                       <ArrowRight size={12} />
-                    </div>
+           {roadmap.tasks.length > 0 && (
+             <div className="pt-6">
+               <div className="border border-blue-200 bg-blue-50/50 rounded-lg p-5 flex flex-col gap-4 shadow-sm">
+                 <div className="flex items-start gap-3">
+                   <div className="p-2 rounded bg-blue-100 text-blue-600 flex-shrink-0">
+                     <Zap size={16} />
+                   </div>
+                   <div>
+                     <h4 className="text-sm font-bold text-slate-900">AI Blueprint Ready</h4>
+                     <p className="text-xs text-slate-500 mt-1">
+                       Reviewing the calculated roadmap with <strong>{roadmap.tasks.length} tasks</strong>.
+                     </p>
+                   </div>
+                 </div>
+                 
+                 {databases.length > 0 && (
+                   <div className="flex items-center justify-between border-t border-slate-200/60 pt-3">
+                     <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Target Database</span>
+                     <select
+                       value={targetDbId || databases[0]?.id}
+                       onChange={(e) => setTargetDbId(e.target.value)}
+                       disabled={syncing || syncSuccess}
+                       className="text-xs font-bold text-slate-800 bg-white border border-slate-200 rounded px-3 py-1.5 outline-none focus:border-slate-400 cursor-pointer disabled:opacity-50 text-left max-w-[160px] truncate"
+                     >
+                       {databases.map(db => (
+                         <option key={db.id} value={db.id}>{db.name}</option>
+                       ))}
+                     </select>
+                   </div>
                  )}
-               </button>
-           </div>
+                 
+                 <div className="flex gap-2 pt-2">
+                   <button 
+                     onClick={handleExport}
+                     disabled={syncing || syncSuccess}
+                     className={`flex-1 py-2.5 rounded text-xs font-bold text-white cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5 uppercase tracking-wider transition-colors ${syncSuccess ? "bg-emerald-500 hover:bg-emerald-600" : "bg-slate-900 hover:bg-slate-800"}`}
+                   >
+                     {syncing ? (
+                       <Loader2 size={14} className="animate-spin" />
+                     ) : syncSuccess ? (
+                       <><Check size={14} /> Export Complete</>
+                     ) : (
+                       <><Check size={14} /> Confirm Deployment</>
+                     )}
+                   </button>
+                 </div>
+               </div>
+             </div>
+           )}
         </div>
       )}
     </div>

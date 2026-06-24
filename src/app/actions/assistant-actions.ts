@@ -171,7 +171,7 @@ export async function getAgentSuggestion(tasks: NotionTask[], userOffset: string
   const rawContent = response.choices[0]?.message?.content || "";
   const result = extractJSON<AgentSuggestion>(rawContent);
 
-  // Validation: ensure we have the critical fields and correct types
+  // Validation: ensure the critical fields and correct types exist
   if (!result || !result.suggestion || !result.reason || typeof result.confidence !== "number") {
     throw new Error("AI returned invalid or incomplete suggestion data.");
   }
