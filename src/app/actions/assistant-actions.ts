@@ -344,7 +344,7 @@ export async function executeUserPrompt(prompt: string, userOffset: string = "+0
     const isPlanIntent = planKeywords.some(kw => prompt.toLowerCase().includes(kw));
     if (isPlanIntent) {
       const { generateHorizonRoadmap } = await import("./horizon-actions");
-      const roadmap = await generateHorizonRoadmap(prompt);
+      const roadmap = await generateHorizonRoadmap(prompt, userOffset);
       decision.action = "PLAN";
       decision.data = {
         planSummary: roadmap.summary,

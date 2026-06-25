@@ -19,28 +19,28 @@ export interface HorizonRoadmap {
   thinkContext?: string;
 }
 
-export async function generateHorizonRoadmap(goalPrompt: string): Promise<HorizonRoadmap> {
+export async function generateHorizonRoadmap(goalPrompt: string, userOffset: string): Promise<HorizonRoadmap> {
   const { fetchNotionTasks, discoverDatabases } = await import("./notion-actions");
   const freshTasks = await fetchNotionTasks();
   const dbs = await discoverDatabases();
   const dbContext = dbs.map(db => `- "${db.name}" (ID: ${db.id})`).join("\n");
 
   const now = new Date();
-  const offsetMinutes = -now.getTimezoneOffset();
-  const sign = offsetMinutes >= 0 ? '+' : '-';
-  const hours = Math.floor(Math.abs(offsetMinutes) / 60).toString().padStart(2, '0');
-  const minutes = (Math.abs(offsetMinutes) % 60).toString().padStart(2, '0');
-  const userOffset = `${sign}${hours}:${minutes}`;
+  
+  // Use the userOffset passed from the client instead of the server's timezone
+  const [offsetSign, offsetH, offsetM] = userOffset.match(/([+-])(\d{2}):(\d{2})/)?.slice(1) || ["+", "0", "0"];
+  const offsetMs = (parseInt(offsetH) * 60 + parseInt(offsetM)) * 60000 * (offsetSign === "+" ? 1 : -1);
+  const localNow = new Date(now.getTime() + offsetMs);
 
   const capacityReport = await getCapacityInsights(freshTasks, userOffset);
   const capacityContext = capacityReport.insights
     .map(i => `- ${i.date}: Current load is ${i.totalHours.toFixed(1)}h (${i.status})`)
     .join("\n");
 
-  const today = now.toISOString().split("T")[0];
-  const dayName = now.toLocaleDateString('en-US', { weekday: 'long' });
-  const localTime = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-  const currentHour = now.getHours();
+  const today = localNow.toISOString().split("T")[0];
+  const dayName = localNow.toLocaleDateString('en-US', { weekday: 'long' });
+  const localTime = localNow.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  const currentHour = localNow.getHours();
   const realisticRemainingHours = Math.max(0, 22 - currentHour); // Assume workday ends at 10 PM
 
   const response = await groq.chat.completions.create({

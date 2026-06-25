@@ -39,7 +39,14 @@ export default function HorizonView({ databases = [] }: HorizonViewProps) {
     setRoadmap(null);
     setSyncSuccess(false);
     try {
-      const data = await generateHorizonRoadmap(goal);
+      const offsetMinutes = -new Date().getTimezoneOffset();
+      const absOffset = Math.abs(offsetMinutes);
+      const hours = Math.floor(absOffset / 60).toString().padStart(2, "0");
+      const minutes = (absOffset % 60).toString().padStart(2, "0");
+      const sign = offsetMinutes >= 0 ? "+" : "-";
+      const userOffset = `${sign}${hours}:${minutes}`;
+
+      const data = await generateHorizonRoadmap(goal, userOffset);
       setRoadmap(data);
       if (data.targetDbId) {
         setTargetDbId(data.targetDbId);
