@@ -38,8 +38,10 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
         localStorage.setItem("proactive_cache_schema", CACHE_VERSION);
       }
 
-      const isInitialError = report?.overallSummary?.includes("Rate Limit") || report?.overallSummary?.includes("API Error");
-      const hasNoInsights = !report?.insights || report?.insights?.length === 0;
+      let currentReport = initialReport;
+
+      const isInitialError = currentReport?.overallSummary?.includes("Rate Limit") || currentReport?.overallSummary?.includes("API Error");
+      const hasNoInsights = !currentReport?.insights || currentReport?.insights?.length === 0;
 
       if (isInitialError || hasNoInsights) {
         try {
@@ -47,14 +49,49 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
           if (saved) {
             const localSaved = JSON.parse(saved);
             if (localSaved.insights && localSaved.insights.length > 0) {
-              setReport(localSaved);
-              setLoading(false);
+              currentReport = localSaved;
             }
           }
         } catch (e) { }
       }
+
+      // Patch the report with any updated user estimates from localStorage (e.g. from Horizon Roadmap)
+      try {
+        const v2Vault = JSON.parse(localStorage.getItem("proactive_task_estimates_v2") || "{}");
+        const savedEstimates: Record<string, number> = {};
+        Object.entries(v2Vault).forEach(([key, data]: [string, any]) => {
+          savedEstimates[key] = data.value || data;
+        });
+
+        if (currentReport && currentReport.insights && Object.keys(savedEstimates).length > 0) {
+          const patchedReport = JSON.parse(JSON.stringify(currentReport));
+          patchedReport.insights.forEach((ins: any) => {
+            let totalHours = 0;
+            ins.taskInsights?.forEach((ti: any) => {
+              const matchedTask = tasks.find(t => normalizeName(t.name) === normalizeName(ti.name));
+              const idMatch = matchedTask ? savedEstimates[matchedTask.id] : undefined;
+              const nameMatch = savedEstimates[ti.name] !== undefined ? savedEstimates[ti.name] : (matchedTask ? savedEstimates[matchedTask.name] : undefined);
+              const est = idMatch !== undefined ? idMatch : (nameMatch !== undefined ? nameMatch : ti.estimatedHours);
+              ti.estimatedHours = est;
+              totalHours += est;
+            });
+            ins.totalHours = totalHours;
+            ins.status = totalHours >= 10 ? "BUSY" : "SAFE";
+          });
+          currentReport = patchedReport;
+        }
+      } catch (e) {
+        console.error("Failed to patch report with local estimates", e);
+      }
+
+      if (currentReport) {
+        setReport(currentReport);
+        if (isInitialError || hasNoInsights) {
+          setLoading(false);
+        }
+      }
     }
-  }, []); // Run once on mount 
+  }, [initialReport, tasks]); // Run on mount and if props change
 
   const fetchInsightsRef = React.useRef<() => void>(() => { });
 

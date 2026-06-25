@@ -39,6 +39,9 @@ export async function generateHorizonRoadmap(goalPrompt: string): Promise<Horizo
 
   const today = now.toISOString().split("T")[0];
   const dayName = now.toLocaleDateString('en-US', { weekday: 'long' });
+  const localTime = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  const currentHour = now.getHours();
+  const realisticRemainingHours = Math.max(0, 22 - currentHour); // Assume workday ends at 10 PM
 
   const response = await groq.chat.completions.create({
     model: await getGroqModel(),
@@ -47,7 +50,7 @@ export async function generateHorizonRoadmap(goalPrompt: string): Promise<Horizo
       {
         role: "system",
         content: `You are the Focus Horizon AI. The user will provide a high-level project goal.
-        Today is ${dayName}, ${today}.
+        Today is ${dayName}, ${today}. The current local time is ${localTime}.
         
         YOUR MISSION: Architect a project roadmap that fits the user's REAL-WORLD capacity.
         
@@ -59,10 +62,11 @@ export async function generateHorizonRoadmap(goalPrompt: string): Promise<Horizo
         
         PLANNING RULES:
         1. STRATEGIC SEQUENCING: Prioritize your REAL-WORLD availability. Look at the CURRENT WORKLOAD above before assigning tasks.
-        2. SMART AVOIDANCE: If a date is labeled "BUSY" (meaning it has >= 10 hours of work), DO NOT schedule new tasks on that day. Skip it and find the next available day with < 7 hours of existing work to ensure you don't instantly make it "BUSY".
-        3. HARD CAP: Ensure the NEW roadmap tasks + EXISTING workload never exceed 10 hours total for any single day.
-        4. ROADMAP STRUCTURE: Generate 4 - 8 subtasks that logically complete the goal.
-        5. TARGET DATABASE: Pick the most logical database from AVAILABLE DATABASES to store this project, or omit if none match perfectly.
+        2. SMART AVOIDANCE: If a date is labeled "BUSY" (meaning it has >= 10 hours of work), DO NOT schedule new tasks on that day. Skip it and find the next available day with < 8 hours of existing work to ensure you don't instantly make it "BUSY".
+        3. HARD CAP: Ensure the NEW roadmap tasks + EXISTING workload never exceed 10 hours total for any single day. (Note: "BUSY" means it has >= 10 hours of work)
+        4. TODAY'S TIME LIMIT: It is currently ${localTime}. You realistically only have about ${realisticRemainingHours} working hours left today. DO NOT assign more than ${realisticRemainingHours} hours of tasks to Today (${today}), regardless of how empty the schedule looks!
+        5. ROADMAP STRUCTURE: Generate 4 - 8 subtasks that logically complete the goal.
+        6. TARGET DATABASE: Pick the most logical database from AVAILABLE DATABASES to store this project, or omit if none match perfectly.
         
         OUTPUT strict JSON schema:
         {

@@ -38,7 +38,7 @@ export default function Sidebar() {
     <aside className="w-60 h-screen bg-white border-r border-slate-200 flex flex-col sticky top-0 overflow-hidden">
       {/* Brand */}
       <div className="p-6">
-        <Link href="/dashboard" className="flex items-center gap-3">
+        <div className="flex items-center gap-3">
           <div className="w-10 h-10 flex items-center justify-center flex-shrink-0">
              <img src="/icon.png" alt="ProActiveAI" className="w-8 h-8 object-contain" />
           </div>
@@ -48,7 +48,7 @@ export default function Sidebar() {
              </span>
              <span className="text-[9px] uppercase tracking-wider text-slate-400 mt-1">Command Center</span>
           </div>
-        </Link>
+        </div>
       </div>
 
       {/* Main Nav */}

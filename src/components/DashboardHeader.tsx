@@ -224,6 +224,7 @@ export default function DashboardHeader() {
   const getPageTitle = () => {
     if (pathname.includes('/strategy')) return 'Capacity Analysis';
     if (pathname.includes('/horizon')) return 'Project Breakdown';
+    if (pathname.includes('/settings')) return 'Settings';
     return 'AI Assistant';
   };
 

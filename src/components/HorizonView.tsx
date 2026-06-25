@@ -62,6 +62,18 @@ export default function HorizonView({ databases = [] }: HorizonViewProps) {
       }));
       const res = await batchCreateNotionTasks(tasksToSync, targetDbId || databases[0]?.id);
       if (res.success) {
+        if (typeof window !== "undefined") {
+          try {
+            const currentVault = JSON.parse(localStorage.getItem("proactive_task_estimates_v2") || "{}");
+            const now = Date.now();
+            roadmap.tasks.forEach(t => {
+              currentVault[t.title] = { value: t.durationHours, lastSeen: now };
+            });
+            localStorage.setItem("proactive_task_estimates_v2", JSON.stringify(currentVault));
+          } catch(e) {
+            console.error("Failed to inject estimates into local storage", e);
+          }
+        }
         setSyncSuccess(true);
       } else {
         alert("Export failed: " + res.error);
@@ -100,7 +112,7 @@ export default function HorizonView({ databases = [] }: HorizonViewProps) {
             <button 
                type="submit" 
                disabled={loading || !goal.trim()} 
-               className="px-6 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+               className="px-6 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
             >
                {loading ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} className="fill-current" />}
                <span>{loading ? "Calculating..." : "Generate Roadmap"}</span>
