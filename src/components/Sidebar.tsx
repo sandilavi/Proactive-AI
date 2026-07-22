@@ -10,6 +10,14 @@ import {
   Settings
 } from 'lucide-react';
 
+function formatModelName(id: string): string {
+  if (!id) return "";
+  const parts = id.split("/");
+  return parts[parts.length - 1]
+    .replace(/-/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 export default function Sidebar() {
   const pathname = usePathname();
 
@@ -33,6 +41,24 @@ export default function Sidebar() {
       description: 'AI Project Breakdown'
     },
   ];
+
+  const [activeModel, setActiveModel] = React.useState<string>("");
+
+  React.useEffect(() => {
+    async function loadModel() {
+      const { getSelectedModel } = await import("@/app/actions/model-actions");
+      const model = await getSelectedModel();
+      setActiveModel(model);
+    }
+    loadModel();
+
+    const handleModelChange = () => {
+      loadModel();
+    };
+
+    window.addEventListener("model-changed", handleModelChange);
+    return () => window.removeEventListener("model-changed", handleModelChange);
+  }, []);
 
   return (
     <aside className="w-60 h-screen bg-white border-r border-slate-200 flex flex-col sticky top-0 overflow-hidden">
@@ -105,7 +131,18 @@ export default function Sidebar() {
             </div>
           </Link>
         </div>
-        <div className="p-4 border-t border-slate-200">
+        <div className="p-4 border-t border-slate-200 space-y-2">
+          {activeModel && (
+            <div className="p-2 rounded bg-slate-50 border border-slate-200 flex flex-col gap-1" title={`Active Model: ${activeModel}`}>
+              <div className="flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 flex-shrink-0 animate-pulse" />
+                <span className="text-[9px] uppercase tracking-wider text-slate-400 font-bold">Model</span>
+              </div>
+              <span className="text-[10px] font-bold text-slate-800 leading-tight break-words pl-3">
+                {formatModelName(activeModel)}
+              </span>
+            </div>
+          )}
           <Link 
             href="/" 
             className="flex items-center justify-center gap-2 w-full py-2.5 rounded bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 border border-slate-200 hover:border-rose-200 transition-colors text-xs font-semibold"

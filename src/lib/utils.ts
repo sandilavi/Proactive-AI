@@ -8,29 +8,23 @@ export function extractJSON<T>(raw: string): T | null {
       clean = clean.replace(/<think>[\s\S]*/g, "").trim();
     }
 
-    // Also try extracting JSON from the RAW string directly
-    const rawJsonMatch = raw.match(/\{[\s\S]*"insights"[\s\S]*\}/) || raw.match(/\{[\s\S]*"action"[\s\S]*\}/) || raw.match(/\{[\s\S]*"projectTitle"[\s\S]*\}/);
-    const candidates = [clean, rawJsonMatch?.[0] || ""].filter(Boolean);
+    // Try extracting JSON block or general object match
+    const markdownMatch = clean.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/i);
+    const outerCurlyMatch = clean.match(/\{[\s\S]*\}/);
+    const candidates = [markdownMatch?.[1], outerCurlyMatch?.[0], clean].filter(Boolean);
 
-    for (const candidate of candidates) {
+    for (const candidate of candidates as string[]) {
       let c = candidate.replace(/```json/gi, "").replace(/```/g, "").trim();
       
-      // Deep Scan
-      const deepMatch = c.match(/\{[\s\S]*\}/);
-      if (deepMatch) {
-        let dm = deepMatch[0].replace(/,\s*([}\]])/g, '$1');
-        try { return JSON.parse(dm) as T; } catch (e) { }
-      }
-
-      // Bracket Hunter
-      c = c.replace(/,\s*([}\]])/g, '$1');
-      try { return JSON.parse(c) as T; } catch (e) { }
-
+      // Deep Scan & trailing comma cleanup
       const firstCurly = c.indexOf('{');
       const lastCurly = c.lastIndexOf('}');
-      if (firstCurly !== -1 && lastCurly !== -1 && lastCurly > firstCurly) {
-        const slice = c.substring(firstCurly, lastCurly + 1);
-        try { return JSON.parse(slice) as T; } catch (e) { }
+      if (firstCurly !== -1 && lastCurly !== -1 && lastCurly >= firstCurly) {
+        let slice = c.substring(firstCurly, lastCurly + 1);
+        slice = slice.replace(/,\s*([}\]])/g, '$1');
+        try { 
+          return JSON.parse(slice) as T; 
+        } catch (e) { }
       }
     }
 

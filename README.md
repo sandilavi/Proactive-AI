@@ -29,7 +29,7 @@ It also features **Focus Horizon**, an AI-driven project roadmap generator that 
 | Framework | [Next.js 16](https://nextjs.org/) (App Router) |
 | Language | TypeScript |
 | Styling | Tailwind CSS v4 |
-| LLM | [Qwen 3 32B](https://huggingface.co/Qwen/Qwen3-32B) via [Groq](https://groq.com/) |
+| LLM | [Qwen 3.6 27B] via [Groq](https://groq.com/) |
 | Task Database | [Notion API](https://developers.notion.com/) |
 | Testing | [Jest](https://jestjs.io/) & ts-jest |
 | Icons | [Lucide React](https://lucide.dev/) |
@@ -161,7 +161,7 @@ User Prompt
     ▼
 ┌─────────────────────────────┐
 │   processUserPrompt()       │  ← LLM classifies intent into:
-│   (Qwen 3 32B via Groq)     │    CREATE / READ / UPDATE / DELETE
+│   (Qwen 3.6 27B via Groq)     │    CREATE / READ / UPDATE / DELETE
 └────────────┬────────────────┘    SUGGEST / PLAN / UNCLEAR / OTHER
              │
              ▼
@@ -191,10 +191,10 @@ The LLM outputs **strict JSON** for all decisions, ensuring reliable parsing wit
 The active LLM model can be configured dynamically directly from the UI:
 
 1. Click on the **Settings (Brain icon)** in the top right of the dashboard.
-2. Select your preferred model from the dropdown (e.g., `qwen/qwen3-32b`, `llama-3.3-70b-versatile`, `mixtral-8x7b-32768`).
+2. Select your preferred model from the dropdown (e.g., `qwen/qwen3.6-27b`, `llama-3.3-70b-versatile`, `mixtral-8x7b-32768`).
 3. The app automatically fetches the latest available models from Groq and saves your selection securely in a cookie.
 
-*(If no cookie is set, it safely defaults to `qwen/qwen3-32b` or the first available fallback model).*
+*(If no cookie is set, it safely defaults to `qwen/qwen3.6-27b` or the first available fallback model).*
 
 ---
 

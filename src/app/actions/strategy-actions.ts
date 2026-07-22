@@ -12,6 +12,7 @@ export interface CapacityInsight {
   reason?: string;
   mitigationTaskName?: string;
   mitigationTargetDate?: string;
+  source?: "AI" | "FALLBACK";
 }
 
 export interface CapacityReport {
@@ -25,6 +26,7 @@ export interface CapacityReport {
     reason: string;
     mitigationTaskName: string;
     mitigationTargetDate: string;
+    source?: "AI" | "FALLBACK";
   }>;
 }
 
@@ -141,10 +143,12 @@ async function runCapacityAnalysis(tasks: NotionTask[], userOffset: string): Pro
           { role: "user", content: `TASKS TO ESTIMATE:\n${estPrompt}` }
         ]
       });
-      const rawContent = response.choices[0]?.message?.content || "";
+      const estMsg = response.choices[0]?.message;
+      const rawContent = estMsg?.content || "";
+      const estReasoning = (estMsg as any)?.reasoning || (estMsg as any)?.reasoning_content || "";
       const data = extractJSON<{ estimations: { id: string, name?: string, estimatedHours: number }[] }>(rawContent);
       const thinkMatch = rawContent.match(/<think>([\s\S]*?)<\/think>/);
-      thinkContext = thinkMatch ? thinkMatch[1].trim() : "";
+      thinkContext = thinkMatch ? thinkMatch[1].trim() : (estReasoning ? estReasoning.trim() : "");
 
       if (data && data.estimations) {
         data.estimations.forEach(est => {
@@ -264,62 +268,124 @@ async function runCapacityAnalysis(tasks: NotionTask[], userOffset: string): Pro
           { role: "user", content: `CALENDAR WORKLOADS:\n${JSON.stringify(calendarWithWorkloads, null, 2)}\n\nBUSY DAYS TO RESOLVE:\n${busyDays.map(d => JSON.stringify(d)).join("\n")}` }
         ]
       });
-      const rawMit = mitResponse.choices[0]?.message?.content || "";
+      const msg = mitResponse.choices[0]?.message;
+      const rawMit = msg?.content || "";
+      const reasoning = (msg as any)?.reasoning || (msg as any)?.reasoning_content || "";
       const thinkMatch = rawMit.match(/<think>([\s\S]*?)<\/think>/);
-      if (thinkMatch) thinkContext = thinkMatch[1].trim();
-
+      const mitThink = thinkMatch ? thinkMatch[1].trim() : (reasoning ? reasoning.trim() : "");
+      if (mitThink) thinkContext = mitThink;
       const mitData = extractJSON<{ mitigations: any[], overallSummary: string }>(rawMit);
       const toHumanDate = (iso: string) => {
         const d = new Date(iso);
         return isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
       };
 
-      if (mitData) {
-        if (mitData.mitigations && mitData.mitigations.length > 0) {
-          if (mitData.overallSummary) overallSummary = mitData.overallSummary.replace(/,?\s*\d{4}/g, "");
-        } else {
-          // AI failed to provide mitigations despite busy days
-          overallSummary = "I detect some busy days. Please manually reschedule tasks to balance your workload.";
+      if (mitData?.mitigations && mitData.mitigations.length > 0) {
+        if (mitData.overallSummary) overallSummary = mitData.overallSummary.replace(/,?\s*\d{4}/g, "");
+      }
+
+      // Programmatically cap & validate mitigations: Only keep valid mitigations required to bring each busy day under 10h
+      const dayWorkloads: Record<string, number> = {};
+      busyDays.forEach(d => { dayWorkloads[d.date] = d.totalHours; });
+
+      const prunedMitigations: any[] = [];
+      for (const mit of (mitData?.mitigations || [])) {
+        // Reject incomplete AI mitigations missing task name or target date
+        if (!mit.mitigationTaskName || !mit.mitigationTargetDate) continue;
+
+        // Normalize date: try to extract YYYY-MM-DD from whatever format AI returned
+        let mitDate = mit.date || "";
+        const isoMatch = mitDate.match(/(\d{4}-\d{2}-\d{2})/);
+        if (isoMatch) mitDate = isoMatch[1];
+
+        const currentLoad = dayWorkloads[mitDate];
+        if (currentLoad !== undefined && currentLoad >= 10) {
+          const dayInsight = busyDays.find(d => d.date === mitDate);
+          const task = dayInsight?.taskInsights?.find((t: any) => t.name.toLowerCase().trim() === (mit.mitigationTaskName || "").toLowerCase().trim());
+          const taskHours = task?.estimatedHours || 2.0;
+
+          prunedMitigations.push({ ...mit, date: mitDate, source: "AI" });
+          dayWorkloads[mitDate] -= taskHours;
         }
-        
-        const formattedMitigations = (mitData.mitigations || []).map((mit: any) => {
-          let cleanSuggestion = (mit.suggestion || "").replace(/,?\s*\d{4}/g, "");
-          const isoRegex = /\d{4}-\d{2}-\d{2}/g;
-          cleanSuggestion = cleanSuggestion.replace(isoRegex, (match: string) => toHumanDate(match));
+      }
 
-          let finalTargetDate = mit.mitigationTargetDate;
-          if (mit.mitigationTargetDate < todayStr || mit.mitigationTargetDate === mit.date) {
-            finalTargetDate = todayStr;
-            cleanSuggestion = cleanSuggestion.replace(toHumanDate(mit.mitigationTargetDate), "Today");
+      // GUARANTEED SYSTEM GUARD FALLBACK: Always runs — for every busy day without a valid AI mitigation
+      const busyDaysNeedingMitigation = busyDays.filter(d => d.totalHours >= 10 && !prunedMitigations.some(m => m.date === d.date));
+      if (busyDaysNeedingMitigation.length > 0) {
+        busyDaysNeedingMitigation.forEach(d => {
+          let load = d.totalHours;
+          if (d.taskInsights && d.taskInsights.length > 0) {
+            // Sort ASCENDING: move the smallest/least-important tasks first to minimise disruption
+            const sortedTasks = [...d.taskInsights].sort((a, b) => a.estimatedHours - b.estimatedHours);
+            for (const task of sortedTasks) {
+              // Stop if already under 10h (strictly less than — 10.0 is still overloaded)
+              if (load <= 9.99) break;
+              const tmr = new Date(localNowToday);
+              tmr.setDate(tmr.getDate() + 1);
+              const targetDateStr = tmr.toISOString().split('T')[0];
+              const newLoad = load - task.estimatedHours;
+
+              prunedMitigations.push({
+                date: d.date,
+                suggestion: `I suggest rescheduling '${task.name}' from ${toHumanDate(d.date)} to ${toHumanDate(targetDateStr)} to reduce the workload on ${toHumanDate(d.date)} to a safe level.`,
+                reason: `Rescheduling this ${task.estimatedHours}h task brings ${toHumanDate(d.date)}'s workload down to ${newLoad.toFixed(1)} hours.`,
+                mitigationTaskName: task.name,
+                mitigationTargetDate: targetDateStr,
+                source: "FALLBACK"
+              });
+              load = newLoad;
+            }
           }
-
-          // Backwards compatibility for single day mapping (uses the first one mapped)
-          const targetDay = insightsArray.find(i => i.date === mit.date);
-          if (targetDay && !targetDay.suggestion) {
-            targetDay.suggestion = cleanSuggestion;
-            targetDay.mitigationTargetDate = finalTargetDate;
-            targetDay.mitigationTaskName = mit.mitigationTaskName;
-            targetDay.reason = mit.reason;
-          }
-
-          return {
-            date: mit.date,
-            suggestion: cleanSuggestion,
-            reason: mit.reason || "",
-            mitigationTaskName: mit.mitigationTaskName,
-            mitigationTargetDate: finalTargetDate
-          };
         });
+        overallSummary = "I detect some busy days. Let's proactively rebalance your workload.";
+      }
+
+      const formattedMitigations = prunedMitigations.map((mit: any) => {
+        let cleanSuggestion = (mit.suggestion || "").replace(/,?\s*\d{4}/g, "");
+        const isoRegex = /\d{4}-\d{2}-\d{2}/g;
+        cleanSuggestion = cleanSuggestion.replace(isoRegex, (match: string) => toHumanDate(match));
+
+        let finalTargetDate = mit.mitigationTargetDate;
+        if (!finalTargetDate || finalTargetDate === mit.date) {
+          const tmr = new Date(localNowToday);
+          tmr.setDate(tmr.getDate() + 1);
+          finalTargetDate = tmr.toISOString().split('T')[0];
+          if (finalTargetDate === mit.date) {
+            const dayAfter = new Date(mit.date);
+            dayAfter.setDate(dayAfter.getDate() + 1);
+            finalTargetDate = dayAfter.toISOString().split('T')[0];
+          }
+        }
+        if (finalTargetDate < todayStr) finalTargetDate = todayStr;
+
+        const targetDay = insightsArray.find(i => i.date === mit.date);
+        if (targetDay && !targetDay.suggestion) {
+          targetDay.suggestion = cleanSuggestion;
+          targetDay.mitigationTargetDate = finalTargetDate;
+          targetDay.mitigationTaskName = mit.mitigationTaskName;
+          targetDay.reason = mit.reason;
+        }
 
         return {
-          insights: insightsArray,
-          overallSummary,
-          knownEstimations: Object.fromEntries(taskEstimationCache),
-          thinkContext,
-          mitigations: formattedMitigations
+          date: mit.date,
+          suggestion: cleanSuggestion,
+          reason: mit.reason || "",
+          mitigationTaskName: mit.mitigationTaskName,
+          mitigationTargetDate: finalTargetDate,
+          source: mit.source || "AI"
         };
-      }
-    } catch (e) { console.error("Mitigation failed", e); }
+      });
+
+      return {
+        insights: insightsArray,
+        overallSummary,
+        knownEstimations: Object.fromEntries(taskEstimationCache),
+        thinkContext,
+        mitigations: formattedMitigations
+      };
+    } catch (e: any) { 
+      console.error("[Strategy] Groq mitigation API error:", e?.message || e);
+    }
   }
 
   return {
@@ -327,6 +393,5 @@ async function runCapacityAnalysis(tasks: NotionTask[], userOffset: string): Pro
     overallSummary,
     knownEstimations: Object.fromEntries(taskEstimationCache),
     thinkContext,
-    mitigations: []
   };
 }

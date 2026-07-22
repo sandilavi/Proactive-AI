@@ -41,6 +41,7 @@ export default function SettingsPage() {
     startTransition(async () => {
       await setSelectedModel(modelId);
       setSelectedModelState(modelId);
+      window.dispatchEvent(new Event("model-changed"));
     });
   };
 
@@ -97,7 +98,7 @@ export default function SettingsPage() {
                   onClick={() => handleSelect(model.id)}
                   disabled={isPending}
                   className={`
-                    flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-semibold transition-all duration-100
+                    flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-semibold transition-all duration-100 cursor-pointer disabled:cursor-not-allowed
                     ${isActive
                       ? "bg-slate-900 text-white border-slate-900"
                       : "bg-white text-slate-700 border-slate-200 hover:border-slate-400 hover:bg-slate-50"}

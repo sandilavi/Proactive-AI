@@ -1,12 +1,20 @@
 import { fetchNotionTasks } from "@/app/actions/notion-actions";
-import { getCapacityInsights } from "@/app/actions/strategy-actions";
+import { getCapacityInsights, CapacityReport } from "@/app/actions/strategy-actions";
+import { NotionTask } from "@/app/actions/assistant-actions";
 import StrategyView from "@/components/StrategyView";
 
 export const dynamic = 'force-dynamic';
 
 export default async function StrategyPage() {
-  const tasks = await fetchNotionTasks();
-  const report = await getCapacityInsights(tasks, "+00:00");
+  let tasks: NotionTask[] = [];
+  let report: CapacityReport | null = null;
+
+  try {
+    tasks = await fetchNotionTasks();
+    report = await getCapacityInsights(tasks, "+00:00");
+  } catch (error) {
+    console.error("[StrategyPage] SSR Data Fetch Error:", error);
+  }
 
   return (
     <div className="space-y-6">

@@ -138,7 +138,69 @@ export default function DashboardHeader() {
     syncToasts();
 
     const syncCapacity = () => {
-      const stored = localStorage.getItem("proactive_capacity_alerts");
+      let stored = localStorage.getItem("proactive_capacity_alerts");
+
+      // Detect if stored alerts are stale/incomplete (missing actionable mitigation data)
+      const hasIncompleteAlerts = (() => {
+        if (!stored) return true;
+        try {
+          const parsed = JSON.parse(stored);
+          const alerts = parsed.alerts || [];
+          if (alerts.length === 0) return true;
+          // If ANY busy alert is missing mitigationTaskName, consider it broken
+          return alerts.some((a: any) => a.status === "BUSY" && (!a.mitigationTaskName || !a.mitigationTargetDate));
+        } catch { return true; }
+      })();
+
+      // Robust Sync: If proactive_capacity_alerts is missing/stale, rebuild from full report
+      if (hasIncompleteAlerts) {
+        const fullReport = localStorage.getItem("proactive_capacity_full_report");
+        if (fullReport) {
+          try {
+            const parsedFull = JSON.parse(fullReport);
+            if (parsedFull.insights) {
+              const rebuiltAlerts: any[] = [];
+              const busyInsights = (parsedFull.insights || []).filter((i: any) => i.status === "BUSY" || i.totalHours >= 10);
+              busyInsights.forEach((i: any) => {
+                const dayMits = (parsedFull.mitigations || []).filter((m: any) => m.date === i.date);
+                if (dayMits.length > 0) {
+                  dayMits.forEach((mit: any) => {
+                    rebuiltAlerts.push({
+                      id: `capacity-${i.date}-${mit.mitigationTaskName}`,
+                      taskId: `capacity-${i.date}-${mit.mitigationTaskName}`,
+                      taskName: `Busy Day on ${i.date}`,
+                      urgency: "CAPACITY_BUSY",
+                      deadline: i.date,
+                      date: i.date,
+                      timestamp: new Date(parsedFull.updatedAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                      alertedAt: parsedFull.updatedAt || Date.now(),
+                      read: false,
+                      suggestion: mit.suggestion,
+                      reason: mit.reason,
+                      totalHours: i.totalHours,
+                      status: "BUSY",
+                      mitigationSuggestion: mit.suggestion,
+                      mitigationTaskName: mit.mitigationTaskName,
+                      mitigationTargetDate: mit.mitigationTargetDate,
+                      source: mit.source || "AI"
+                    });
+                  });
+                }
+              });
+              if (rebuiltAlerts.length > 0) {
+                const rebuiltData = {
+                  alerts: rebuiltAlerts,
+                  summary: parsedFull.overallSummary || "I detect some busy days. Let's proactively rebalance your workload.",
+                  updatedAt: Date.now()
+                };
+                localStorage.setItem("proactive_capacity_alerts", JSON.stringify(rebuiltData));
+                stored = JSON.stringify(rebuiltData);
+              }
+            }
+          } catch (e) {}
+        }
+      }
+
       if (stored) {
         try {
           const parsed = JSON.parse(stored);
@@ -160,13 +222,17 @@ export default function DashboardHeader() {
 
           setCapacityData(parsed);
           setHasOverload(filteredAlerts.some((a: any) => a.status === "BUSY"));
-          
-          const lastReadTime = Number(localStorage.getItem("proactive_last_capacity_read_timestamp") || 0);
-          if (parsed.updatedAt > lastReadTime && validAlerts.length > 0) {
-            setUnreadCapacityCount(validAlerts.length);
-          } else {
-            setUnreadCapacityCount(0);
-          }
+
+          // Only show unread badge if the panel is currently closed AND new alerts arrived since last read
+          setUnreadCapacityCount(prev => {
+            const lastReadTime = Number(localStorage.getItem("proactive_last_capacity_read_timestamp") || 0);
+            const isHubOpen = document.querySelector("[data-capacity-hub-open='true']") !== null;
+            if (isHubOpen) return 0;
+            if (parsed.updatedAt > lastReadTime + 2000 && validAlerts.length > 0) {
+              return validAlerts.length;
+            }
+            return prev === 0 ? 0 : prev;
+          });
         } catch {}
       }
     };
@@ -270,7 +336,7 @@ export default function DashboardHeader() {
           </button>
 
           {capacityHubOpen && (
-            <div className="absolute top-10 right-0 w-80 max-h-[480px] bg-white border border-slate-200 rounded shadow-md z-50 flex flex-col">
+            <div data-capacity-hub-open="true" className="absolute top-10 right-0 w-80 max-h-[480px] bg-white border border-slate-200 rounded shadow-md z-50 flex flex-col">
                <div className="p-3 bg-slate-900 text-white font-bold text-xs">
                  Strategic Capacity Insights
                </div>
@@ -299,17 +365,31 @@ export default function DashboardHeader() {
                           ? "Upcoming Period" 
                           : dateObj.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
                         const alertId = alert.id || `capacity-${alert.date}-${alert.mitigationTaskName || ''}`;
+                        const alertedMs = alert.alertedAt || capacityData.updatedAt || Date.now();
+                        const timeStr = new Date(alertedMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                        const formattedTime = getFormattedAlertTime(alertedMs, timeStr);
 
                         return (
                           <div key={alertId} className={`p-3 bg-white border rounded shadow-sm border-l-4 ${
                             String(alertId).startsWith('overdue-') ? 'border-l-red-500' : isBusy ? 'border-l-orange-500' : 'border-l-indigo-500'
                           }`}>
                              <div className="flex items-center justify-between mb-1.5">
-                                <span className="text-xs font-bold text-slate-800">
-                                  {String(alertId).startsWith('overdue-') ? `⚠ Overdue · ${displayDate}` : displayDate}
-                                </span>
-                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${isBusy ? 'bg-orange-50 text-orange-700 border-orange-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200'}`}>
-                                  {(alert.estimatedHours !== undefined ? alert.estimatedHours : (alert.totalHours || 0)).toFixed(1)}h
+                                <div className="flex items-center gap-2">
+                                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${isBusy ? 'bg-orange-50 text-orange-700 border-orange-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200'}`}>
+                                    {(alert.estimatedHours !== undefined ? alert.estimatedHours : (alert.totalHours || 0)).toFixed(1)}h
+                                  </span>
+                                  {alert.source === "FALLBACK" ? (
+                                    <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300" title="Generated by System Capacity Guard fallback">
+                                      🛡 System Guard
+                                    </span>
+                                  ) : (
+                                    <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 border border-indigo-200" title="Generated by AI Model">
+                                      ⚡ AI Model
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-[9px] text-slate-400 font-semibold">
+                                  {formattedTime}
                                 </span>
                              </div>
 
