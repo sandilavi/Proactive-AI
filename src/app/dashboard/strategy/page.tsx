@@ -1,5 +1,4 @@
 import { fetchNotionTasks } from "@/app/actions/notion-actions";
-import { getCapacityInsights, CapacityReport } from "@/app/actions/strategy-actions";
 import { NotionTask } from "@/app/actions/assistant-actions";
 import StrategyView from "@/components/StrategyView";
 
@@ -7,11 +6,9 @@ export const dynamic = 'force-dynamic';
 
 export default async function StrategyPage() {
   let tasks: NotionTask[] = [];
-  let report: CapacityReport | null = null;
 
   try {
     tasks = await fetchNotionTasks();
-    report = await getCapacityInsights(tasks, "+00:00");
   } catch (error) {
     console.error("[StrategyPage] SSR Data Fetch Error:", error);
   }
@@ -26,7 +23,7 @@ export default async function StrategyPage() {
         <p className="text-xs text-slate-500">Analyze capacity limits and workload slots for upcoming cycles.</p>
       </div>
 
-      <StrategyView tasks={tasks} initialReport={report} />
+      <StrategyView tasks={tasks} />
     </div>
   );
 }

@@ -15,7 +15,7 @@ function formatModelName(id: string): string {
   const parts = id.split("/");
   return parts[parts.length - 1]
     .replace(/-/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+    .toUpperCase();
 }
 
 export default function Sidebar() {
@@ -136,9 +136,9 @@ export default function Sidebar() {
             <div className="p-2 rounded bg-slate-50 border border-slate-200 flex flex-col gap-1" title={`Active Model: ${activeModel}`}>
               <div className="flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 flex-shrink-0 animate-pulse" />
-                <span className="text-[9px] uppercase tracking-wider text-slate-400 font-bold">Model</span>
+                <span className="text-[9px] uppercase tracking-wider text-slate-400 font-bold">LLM Model</span>
               </div>
-              <span className="text-[10px] font-bold text-slate-800 leading-tight break-words pl-3">
+              <span className="text-[10px] font-bold text-slate-800 leading-tight break-words pl-3 uppercase">
                 {formatModelName(activeModel)}
               </span>
             </div>

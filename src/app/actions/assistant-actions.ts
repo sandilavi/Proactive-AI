@@ -100,9 +100,11 @@ export async function processUserPrompt(prompt: string, taskContext: string, use
     ],
   });
 
-  const rawContent = response.choices[0]?.message?.content || "";
+  const msg = response.choices[0]?.message;
+  const rawContent = msg?.content || "";
+  const reasoning = (msg as any)?.reasoning || (msg as any)?.reasoning_content || "";
   const thinkMatch = rawContent.match(/<think>([\s\S]*?)<\/think>/);
-  const thinkContext = thinkMatch ? thinkMatch[1].trim() : "";
+  const thinkContext = thinkMatch ? thinkMatch[1].trim() : (reasoning ? reasoning.trim() : "");
   const parsed = extractJSON<AgentResponse>(rawContent);
 
   return { ...parsed, thinkContext: thinkContext || (parsed as any)?.thinkContext || "" } as any;
@@ -168,7 +170,11 @@ export async function getAgentSuggestion(tasks: NotionTask[], userOffset: string
     ],
   });
 
-  const rawContent = response.choices[0]?.message?.content || "";
+  const msg = response.choices[0]?.message;
+  const rawContent = msg?.content || "";
+  const reasoning = (msg as any)?.reasoning || (msg as any)?.reasoning_content || "";
+  const thinkMatch = rawContent.match(/<think>([\s\S]*?)<\/think>/);
+  const thinkContext = thinkMatch ? thinkMatch[1].trim() : (reasoning ? reasoning.trim() : "");
   const result = extractJSON<AgentSuggestion>(rawContent);
 
   // Validation: ensure the critical fields and correct types exist
@@ -184,7 +190,7 @@ export async function getAgentSuggestion(tasks: NotionTask[], userOffset: string
   return {
     ...result,
     priority,
-    thinkContext: rawContent.match(/<think>([\s\S]*?)<\/think>/)?.[1].trim() || "",
+    thinkContext,
     updatedAt: Date.now(),
     deadline: matchedTask?.deadline
   };

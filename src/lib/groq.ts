@@ -4,7 +4,7 @@ export const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
 
-export const DEFAULT_GROQ_MODEL = "qwen/qwen3.6-27b";
+export const DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b";
 
 let cachedModels: string[] | null = null;
 let lastFetched: number = 0;

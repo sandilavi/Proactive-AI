@@ -18,7 +18,9 @@ export async function POST(req: NextRequest) {
             messages: [{ role: "user", content: message }],
         });
 
-        let reply = response.choices[0]?.message?.content || "";
+        const msg = response.choices[0]?.message;
+        let reply = msg?.content || "";
+        const reasoning = (msg as any)?.reasoning || (msg as any)?.reasoning_content || "";
         let thinkContext = "";
 
         // Extract <think>...</think> if present
@@ -27,6 +29,8 @@ export async function POST(req: NextRequest) {
             thinkContext = thinkMatch[1].trim();
             // Remove the <think> block from the final reply
             reply = reply.replace(/<think>[\s\S]*?<\/think>\n*/, "").trim();
+        } else if (reasoning) {
+            thinkContext = reasoning.trim();
         }
 
         // Clean up formatting (remove newlines, markdown characters, and specific words)

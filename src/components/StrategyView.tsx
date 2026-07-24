@@ -38,90 +38,62 @@ interface StrategyViewProps {
 
 export default function StrategyView({ tasks, initialReport }: StrategyViewProps) {
   const [syncedTasks, setSyncedTasks] = useState<NotionTask[]>(tasks || []);
-  const [report, setReport] = useState<CapacityReport | null>(initialReport || null);
-  const [loading, setLoading] = useState(!report);
+  const [report, setReport] = useState<CapacityReport | null>(null);
+  const [loading, setLoading] = useState(true);
   const [thinkOpen, setThinkOpen] = useState(false);
-  const [reportUpdatedAt, setReportUpdatedAt] = useState<number>(() => {
+  const [reportUpdatedAt, setReportUpdatedAt] = useState<number | null>(null);
+
+  // Restore cached report from localStorage on mount (no server-side AI call anymore)
+  useEffect(() => {
     if (typeof window !== "undefined") {
+      // Restore report timestamp
       try {
-        const saved = localStorage.getItem("proactive_capacity_alerts");
+        const savedAlerts = localStorage.getItem("proactive_capacity_alerts");
+        if (savedAlerts) {
+          const parsed = JSON.parse(savedAlerts);
+          if (parsed.updatedAt) setReportUpdatedAt(parsed.updatedAt);
+        }
+      } catch (e) {}
+
+      // Restore cached report immediately so the card doesn't flash
+      try {
+        const saved = localStorage.getItem("proactive_capacity_full_report");
         if (saved) {
-          const parsed = JSON.parse(saved);
-          if (parsed.updatedAt) return parsed.updatedAt;
+          const localSaved = JSON.parse(saved);
+          if (localSaved.insights && localSaved.insights.length > 0) {
+            // Patch with local estimates
+            const v2Vault = JSON.parse(localStorage.getItem("proactive_task_estimates_v2") || "{}");
+            const savedEstimates: Record<string, number> = {};
+            Object.entries(v2Vault).forEach(([key, data]: [string, any]) => {
+              savedEstimates[key] = data.value || data;
+            });
+
+            if (Object.keys(savedEstimates).length > 0) {
+              const patchedReport = JSON.parse(JSON.stringify(localSaved));
+              patchedReport.insights.forEach((ins: any) => {
+                let totalHours = 0;
+                ins.taskInsights?.forEach((ti: any) => {
+                  const matchedTask = tasks.find(t => normalizeName(t.name) === normalizeName(ti.name));
+                  const idMatch = matchedTask ? savedEstimates[matchedTask.id] : undefined;
+                  const nameMatch = savedEstimates[ti.name] !== undefined ? savedEstimates[ti.name] : (matchedTask ? savedEstimates[matchedTask.name] : undefined);
+                  const est = idMatch !== undefined ? idMatch : (nameMatch !== undefined ? nameMatch : ti.estimatedHours);
+                  ti.estimatedHours = est;
+                  totalHours += est;
+                });
+                ins.totalHours = totalHours;
+                ins.status = totalHours >= 10 ? "BUSY" : "SAFE";
+              });
+              setReport(patchedReport);
+            } else {
+              setReport(localSaved);
+            }
+            if (localSaved.updatedAt) setReportUpdatedAt(localSaved.updatedAt);
+            setLoading(false);
+          }
         }
       } catch (e) {}
     }
-    return Date.now();
-  });
-
-  // Hydration fix: Match server HTML on first render, then switch to local memory.
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      // Clear stale fingerprints on cache schema change
-      const CACHE_VERSION = "v21-cookie-decode-fix";
-      if (localStorage.getItem("proactive_cache_schema") !== CACHE_VERSION) {
-        localStorage.removeItem("proactive_capacity_fingerprint_strategy");
-        localStorage.removeItem("proactive_capacity_last_day_strategy");
-        localStorage.removeItem("proactive_capacity_fingerprint");
-        localStorage.removeItem("proactive_capacity_full_report");
-        localStorage.removeItem("proactive_capacity_alerts");
-        localStorage.setItem("proactive_cache_schema", CACHE_VERSION);
-      }
-
-      let currentReport = initialReport;
-
-      const isInitialError = currentReport?.overallSummary?.includes("Rate Limit") || currentReport?.overallSummary?.includes("API Error");
-      const hasNoInsights = !currentReport?.insights || currentReport?.insights?.length === 0;
-
-      if (isInitialError || hasNoInsights) {
-        try {
-          const saved = localStorage.getItem("proactive_capacity_full_report");
-          if (saved) {
-            const localSaved = JSON.parse(saved);
-            if (localSaved.insights && localSaved.insights.length > 0) {
-              currentReport = localSaved;
-            }
-          }
-        } catch (e) { }
-      }
-
-      // Patch the report with any updated user estimates from localStorage (e.g. from Horizon Roadmap)
-      try {
-        const v2Vault = JSON.parse(localStorage.getItem("proactive_task_estimates_v2") || "{}");
-        const savedEstimates: Record<string, number> = {};
-        Object.entries(v2Vault).forEach(([key, data]: [string, any]) => {
-          savedEstimates[key] = data.value || data;
-        });
-
-        if (currentReport && currentReport.insights && Object.keys(savedEstimates).length > 0) {
-          const patchedReport = JSON.parse(JSON.stringify(currentReport));
-          patchedReport.insights.forEach((ins: any) => {
-            let totalHours = 0;
-            ins.taskInsights?.forEach((ti: any) => {
-              const matchedTask = tasks.find(t => normalizeName(t.name) === normalizeName(ti.name));
-              const idMatch = matchedTask ? savedEstimates[matchedTask.id] : undefined;
-              const nameMatch = savedEstimates[ti.name] !== undefined ? savedEstimates[ti.name] : (matchedTask ? savedEstimates[matchedTask.name] : undefined);
-              const est = idMatch !== undefined ? idMatch : (nameMatch !== undefined ? nameMatch : ti.estimatedHours);
-              ti.estimatedHours = est;
-              totalHours += est;
-            });
-            ins.totalHours = totalHours;
-            ins.status = totalHours >= 10 ? "BUSY" : "SAFE";
-          });
-          currentReport = patchedReport;
-        }
-      } catch (e) {
-        console.error("Failed to patch report with local estimates", e);
-      }
-
-      if (currentReport) {
-        setReport(currentReport);
-        if (isInitialError || hasNoInsights) {
-          setLoading(false);
-        }
-      }
-    }
-  }, [initialReport, tasks]); // Run on mount and if props change
+  }, [tasks]); // Run on mount
 
   const fetchInsightsRef = React.useRef<() => void>(() => { });
 
@@ -140,9 +112,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
         if (!freshTasks) return;
         setSyncedTasks(freshTasks); // Update UI tasks immediately
 
-        const rawCookie = typeof window !== "undefined" ? document.cookie.split(";").find(c => c.trim().startsWith("selected_groq_model="))?.split("=")[1]?.trim() : undefined;
-        const activeModel = rawCookie ? decodeURIComponent(rawCookie) : "default";
-        const currentFingerprint = activeModel + "|" + [...freshTasks]
+        const currentFingerprint = [...freshTasks]
           .sort((a, b) => a.id.localeCompare(b.id))
           .map(t => `${t.id}-${t.status}-${t.name}-${t.deadline}`)
           .join("|");
@@ -160,6 +130,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                 const parsed = JSON.parse(saved);
                 if (parsed?.insights?.length > 0) {
                   setReport(parsed);
+                  if (parsed.updatedAt) setReportUpdatedAt(parsed.updatedAt);
                   setLoading(false);
                 }
               } catch (e) {}
@@ -195,9 +166,12 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
         // Update fingerprints only after a successful (non-cooldown) call
         const isRateLimitResponse = data?.overallSummary?.includes("Rate Limit");
         if (!isRateLimitResponse && data && Array.isArray(data.insights)) {
+          const generatedAtTime = Date.now();
+          const reportWithMeta = { ...data, updatedAt: generatedAtTime };
+
           localStorage.setItem("proactive_capacity_fingerprint_strategy", currentFingerprint);
           localStorage.setItem("proactive_capacity_last_day_strategy", todayStr);
-          localStorage.setItem("proactive_capacity_full_report", JSON.stringify(data));
+          localStorage.setItem("proactive_capacity_full_report", JSON.stringify(reportWithMeta));
 
           // Legacy Sync: Update capacity alerts for the global hub
           const capacityAlerts: any[] = [];
@@ -261,8 +235,8 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                   urgency: "CAPACITY_BUSY",
                   deadline: i.date,
                   date: i.date,
-                  timestamp: new Date().toISOString(),
-                  alertedAt: Date.now(),
+                  timestamp: new Date(generatedAtTime).toISOString(),
+                  alertedAt: generatedAtTime,
                   read: false,
                   suggestion: formattedSuggestion,
                   reason: mit.reason,
@@ -306,8 +280,8 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                   urgency: "CAPACITY_BUSY",
                   deadline: i.date,
                   date: i.date,
-                  timestamp: new Date().toISOString(),
-                  alertedAt: Date.now(),
+                  timestamp: new Date(generatedAtTime).toISOString(),
+                  alertedAt: generatedAtTime,
                   read: false,
                   suggestion: formattedSuggestion,
                   reason: reason,
@@ -329,16 +303,16 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
             alerts: capacityAlerts,
             summary: data.overallSummary,
             deadlineFingerprint: currentFingerprint,
-            updatedAt: Date.now()
+            updatedAt: generatedAtTime
           }));
           window.dispatchEvent(new Event('capacity-alerts-updated'));
+          setReport(reportWithMeta);
+          setReportUpdatedAt(generatedAtTime);
         } else if (isRateLimitResponse) {
           localStorage.removeItem("proactive_capacity_fingerprint_strategy");
           localStorage.removeItem("proactive_capacity_last_day_strategy");
+          setReport(data);
         }
-
-        setReport(data);
-        setReportUpdatedAt(Date.now());
       } catch (err) {
         console.error("Strategy Insight Error:", err);
       } finally {
@@ -356,7 +330,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
     return () => {
       window.removeEventListener('notion-tasks-updated', handleSync);
     };
-  }, [tasks, initialReport]);
+  }, [tasks]);
 
   // Auto-retry on rate limits
   const isCooldown = report?.overallSummary?.includes("Rate Limit");
@@ -426,9 +400,11 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                 </span>
               </div>
             </div>
-            <span className="text-[9px] text-slate-400 font-semibold block pt-1">
-              Generated at {getFormattedReportTime(reportUpdatedAt)}
-            </span>
+            {reportUpdatedAt && (
+              <span className="text-[9px] text-slate-400 font-semibold block pt-1" suppressHydrationWarning>
+                Generated at {getFormattedReportTime(reportUpdatedAt)}
+              </span>
+            )}
           </div>
         </div>
 

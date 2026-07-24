@@ -3,7 +3,7 @@ import React, { useEffect, useState, useTransition } from "react";
 import { listGroqModels, getSelectedModel, setSelectedModel, GroqModel } from "@/app/actions/model-actions";
 import { Check, Cpu, Loader2, RefreshCw, Zap } from "lucide-react";
 
-const DEFAULT_GROQ_MODEL = "qwen/qwen3-32b";
+const DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b";
 
 function getModelDisplayName(id: string): string {
   const parts = id.split("/");

@@ -160,11 +160,34 @@ export default function DashboardHeader() {
             const parsedFull = JSON.parse(fullReport);
             if (parsedFull.insights) {
               const rebuiltAlerts: any[] = [];
+              const cleanName = (n: string) => n.toLowerCase().replace(/[^a-z0-9]/g, "");
+              const estMap: Record<string, number> = {};
+              (parsedFull.insights || []).forEach((day: any) => {
+                (day.taskInsights || []).forEach((ti: any) => {
+                  if (ti.id) estMap[ti.id] = ti.estimatedHours;
+                  if (ti.name) estMap[cleanName(ti.name)] = ti.estimatedHours;
+                });
+              });
+
+              try {
+                const v2Vault = JSON.parse(localStorage.getItem("proactive_task_estimates_v2") || "{}");
+                Object.entries(v2Vault).forEach(([key, val]: [string, any]) => {
+                  const numVal = val?.value !== undefined ? val.value : val;
+                  if (typeof numVal === 'number') {
+                    estMap[key] = numVal;
+                    estMap[cleanName(key)] = numVal;
+                  }
+                });
+              } catch (e) {}
+
               const busyInsights = (parsedFull.insights || []).filter((i: any) => i.status === "BUSY" || i.totalHours >= 10);
               busyInsights.forEach((i: any) => {
                 const dayMits = (parsedFull.mitigations || []).filter((m: any) => m.date === i.date);
                 if (dayMits.length > 0) {
                   dayMits.forEach((mit: any) => {
+                    const normMitName = cleanName(mit.mitigationTaskName);
+                    const estHours = estMap[normMitName] || 1.5;
+
                     rebuiltAlerts.push({
                       id: `capacity-${i.date}-${mit.mitigationTaskName}`,
                       taskId: `capacity-${i.date}-${mit.mitigationTaskName}`,
@@ -182,6 +205,7 @@ export default function DashboardHeader() {
                       mitigationSuggestion: mit.suggestion,
                       mitigationTaskName: mit.mitigationTaskName,
                       mitigationTargetDate: mit.mitigationTargetDate,
+                      estimatedHours: estHours,
                       source: mit.source || "AI"
                     });
                   });
@@ -191,7 +215,7 @@ export default function DashboardHeader() {
                 const rebuiltData = {
                   alerts: rebuiltAlerts,
                   summary: parsedFull.overallSummary || "I detect some busy days. Let's proactively rebalance your workload.",
-                  updatedAt: Date.now()
+                  updatedAt: parsedFull.updatedAt || Date.now()
                 };
                 localStorage.setItem("proactive_capacity_alerts", JSON.stringify(rebuiltData));
                 stored = JSON.stringify(rebuiltData);

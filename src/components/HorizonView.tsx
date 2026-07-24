@@ -146,6 +146,15 @@ export default function HorizonView({ databases = [] }: HorizonViewProps) {
                </p>
              </div>
 
+              <div className="mt-3 flex gap-6">
+                 <div>
+                    <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider block mb-0.5">Duration</span>
+                    <span className="text-base font-bold">
+                      {new Set(roadmap.tasks.map(t => t.date)).size} {new Set(roadmap.tasks.map(t => t.date)).size === 1 ? 'Day' : 'Days'}
+                    </span>
+                 </div>
+              </div>
+
              {roadmap.thinkContext && (
                <div className="mt-4 pt-4 border-t border-slate-800">
                  <button
@@ -172,15 +181,6 @@ export default function HorizonView({ databases = [] }: HorizonViewProps) {
                  )}
                </div>
              )}
-             
-             <div className="mt-4 pt-4 border-t border-slate-800 flex gap-6">
-                <div>
-                   <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider block mb-0.5">Duration</span>
-                   <span className="text-base font-bold">
-                     {new Set(roadmap.tasks.map(t => t.date)).size} {new Set(roadmap.tasks.map(t => t.date)).size === 1 ? 'Day' : 'Days'}
-                   </span>
-                </div>
-             </div>
            </div>
 
            {/* Timeline */}

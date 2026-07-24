@@ -83,10 +83,12 @@ export async function generateHorizonRoadmap(goalPrompt: string, userOffset: str
     ]
   });
 
-  const raw = response.choices[0]?.message?.content || "";
+  const msg = response.choices[0]?.message;
+  const raw = msg?.content || "";
   const data = extractJSON<HorizonRoadmap>(raw);
+  const reasoning = (msg as any)?.reasoning || (msg as any)?.reasoning_content || "";
   const thinkMatch = raw.match(/<think>([\s\S]*?)<\/think>/);
-  const thinkContext = thinkMatch ? thinkMatch[1].trim() : (data as any)?.thinkContext || "";
+  const thinkContext = thinkMatch ? thinkMatch[1].trim() : (reasoning ? reasoning.trim() : ((data as any)?.thinkContext || ""));
 
   const finalData = data || { projectTitle: "Generation Failed", summary: "Please try again.", tasks: [] };
   return { ...finalData, thinkContext };

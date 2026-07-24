@@ -1,6 +1,6 @@
-# ProactiveAI 🤖
+# ProactiveAI
 
-> **Your Intelligent Notion Task Agent** — manage your Notion tasks using natural language, powered by Qwen 3 via Groq.
+> **Your Intelligent Notion Task Agent** — manage your Notion tasks using natural language, powered by GPT OSS 120B via Groq.
 
 ProactiveAI is a Next.js web app that lets you interact with your Notion task database through a conversational command interface. Instead of opening Notion manually, just type what you want — create tasks, check deadlines, update statuses, delete tasks, or ask the AI to prioritize your workload for you. 
 
@@ -29,7 +29,7 @@ It also features **Focus Horizon**, an AI-driven project roadmap generator that 
 | Framework | [Next.js 16](https://nextjs.org/) (App Router) |
 | Language | TypeScript |
 | Styling | Tailwind CSS v4 |
-| LLM | [Qwen 3.6 27B] via [Groq](https://groq.com/) |
+| LLM | [GPT OSS 120B] via [Groq](https://groq.com/) |
 | Task Database | [Notion API](https://developers.notion.com/) |
 | Testing | [Jest](https://jestjs.io/) & ts-jest |
 | Icons | [Lucide React](https://lucide.dev/) |
@@ -161,7 +161,7 @@ User Prompt
     ▼
 ┌─────────────────────────────┐
 │   processUserPrompt()       │  ← LLM classifies intent into:
-│   (Qwen 3.6 27B via Groq)     │    CREATE / READ / UPDATE / DELETE
+│   (GPT OSS 120B via Groq)     │    CREATE / READ / UPDATE / DELETE
 └────────────┬────────────────┘    SUGGEST / PLAN / UNCLEAR / OTHER
              │
              ▼
@@ -191,10 +191,10 @@ The LLM outputs **strict JSON** for all decisions, ensuring reliable parsing wit
 The active LLM model can be configured dynamically directly from the UI:
 
 1. Click on the **Settings (Brain icon)** in the top right of the dashboard.
-2. Select your preferred model from the dropdown (e.g., `qwen/qwen3.6-27b`, `llama-3.3-70b-versatile`, `mixtral-8x7b-32768`).
+2. Select your preferred model from the dropdown (e.g., `openai/gpt-oss-120b`, `qwen/qwen3.6-27b`, `llama-3.3-70b-versatile`).
 3. The app automatically fetches the latest available models from Groq and saves your selection securely in a cookie.
 
-*(If no cookie is set, it safely defaults to `qwen/qwen3.6-27b` or the first available fallback model).*
+*(If no cookie is set, it safely defaults to `openai/gpt-oss-120b` or the first available fallback model).*
 
 ---
 

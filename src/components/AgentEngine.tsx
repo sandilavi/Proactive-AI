@@ -72,12 +72,13 @@ export default function AgentEngine() {
     const syncNotifications = async () => {
       try {
         if (typeof window !== "undefined") {
-          const CACHE_VERSION = "v5-fuzzy-matching";
+          const CACHE_VERSION = "v6-stable-fp";
           if (localStorage.getItem("proactive_cache_schema") !== CACHE_VERSION) {
             localStorage.removeItem("proactive_capacity_fingerprint_strategy");
             localStorage.removeItem("proactive_capacity_last_day_strategy");
             localStorage.removeItem("proactive_capacity_fingerprint");
             localStorage.removeItem("proactive_capacity_full_report");
+            localStorage.removeItem("proactive_engine_deadline_fp");
             localStorage.setItem("proactive_cache_schema", CACHE_VERSION);
           }
         }
@@ -269,7 +270,7 @@ export default function AgentEngine() {
 
         // Logic: Monitor capacity state and trigger notifications on change.
         const storedFingerprint = localStorage.getItem("proactive_capacity_fingerprint");
-        const currentCapacityFingerprint = `v13|${today}|${currentFingerprint}`;
+        const currentCapacityFingerprint = `v14|${today}|${currentFingerprint}`;
 
         // FORCE REFRESH: if the cached alerts are empty but tasks exist, recalculate regardless of fingerprint
         const existingCachedAlerts = JSON.parse(localStorage.getItem("proactive_capacity_alerts") || "{}");
@@ -383,6 +384,11 @@ export default function AgentEngine() {
                           estHours = updatedEstimates[mit.mitigationTaskName];
                         }
 
+                        // Preserve existing alertedAt so unread badge doesn't re-fire on every poll
+                        const prevAlert = (existingCachedAlerts.alerts || []).find((a: any) => a.id === `capacity-${i.date}-${mit.mitigationTaskName}`);
+                        const alertedAtTs = prevAlert?.alertedAt || Date.now();
+                        const alertReadState = prevAlert?.read ?? false;
+
                         capacityAlerts.push({
                             id: `capacity-${i.date}-${mit.mitigationTaskName}`,
                             taskId: `capacity-${i.date}-${mit.mitigationTaskName}`,
@@ -390,9 +396,9 @@ export default function AgentEngine() {
                             urgency: "CAPACITY_BUSY",
                             deadline: i.date,
                             date: i.date,
-                            timestamp: new Date().toISOString(),
-                            alertedAt: Date.now(),
-                            read: false,
+                            timestamp: new Date(alertedAtTs).toISOString(),
+                            alertedAt: alertedAtTs,
+                            read: alertReadState,
                             suggestion: formattedSuggestion,
                             reason: mit.reason,
                             totalHours: i.totalHours,
@@ -420,6 +426,10 @@ export default function AgentEngine() {
                           }
                         }
 
+                        const prevAlertFb = (existingCachedAlerts.alerts || []).find((a: any) => a.id === `capacity-${i.date}`);
+                        const alertedAtTsFb = prevAlertFb?.alertedAt || Date.now();
+                        const alertReadStateFb = prevAlertFb?.read ?? false;
+
                         capacityAlerts.push({
                             id: `capacity-${i.date}`,
                             taskId: `capacity-${i.date}`,
@@ -427,9 +437,9 @@ export default function AgentEngine() {
                             urgency: "CAPACITY_BUSY",
                             deadline: i.date,
                             date: i.date,
-                            timestamp: new Date().toISOString(),
-                            alertedAt: Date.now(),
-                            read: false,
+                            timestamp: new Date(alertedAtTsFb).toISOString(),
+                            alertedAt: alertedAtTsFb,
+                            read: alertReadStateFb,
                             suggestion: formattedSuggestion,
                             reason: i.reason,
                             totalHours: i.totalHours,
@@ -515,37 +525,43 @@ export default function AgentEngine() {
                 localStorage.setItem("proactive_rejected_moves", JSON.stringify(cleanedRejections));
 
                 localStorage.setItem("proactive_capacity_fingerprint", currentCapacityFingerprint);
-                
-                // Compute deadline fingerprint for change-detection in StrategyView
+
+                // Use a DEDICATED key for AgentEngine's deadline fingerprint so it never conflicts
+                // with StrategyView's proactive_capacity_alerts.deadlineFingerprint (different format).
                 const deadlineFingerprint = freshTasks
                   .filter(t => t.status?.toLowerCase() !== "done")
                   .map(t => `${t.id}:${t.deadline ?? ""}`)
                   .sort()
                   .join("|");
+                const storedEngineFP = localStorage.getItem("proactive_engine_deadline_fp") || "";
+                const deadlineChanged = deadlineFingerprint !== storedEngineFP;
 
-                // Critical: Only update the 'updatedAt' timestamp if there are alerts to show.
-                // This prevents "Ghost Notifications" from appearing when there's nothing to see.
+                // Read existing alerts to preserve updatedAt (don't bump unless deadlines actually changed)
                 const lastData = JSON.parse(localStorage.getItem("proactive_capacity_alerts") || "{}");
-                const hasNewAlerts = filteredCapacityAlerts.length > 0;
-                const deadlineChanged = deadlineFingerprint !== (lastData.deadlineFingerprint || "");
-                
+
                 localStorage.setItem("proactive_capacity_alerts", JSON.stringify({
                     alerts: filteredCapacityAlerts,
                     summary: report.overallSummary,
-                    deadlineFingerprint,
-                    updatedAt: (hasNewAlerts || deadlineChanged) ? Date.now() : (lastData.updatedAt || Date.now())
+                    updatedAt: (deadlineChanged || !lastData.updatedAt) ? Date.now() : lastData.updatedAt
                 }));
 
-                // Sync report and strategy fingerprints so StrategyView reuse matches
-                localStorage.setItem("proactive_capacity_full_report", JSON.stringify(report));
-                localStorage.setItem("proactive_capacity_fingerprint_strategy", strategyTaskFingerprint);
-                localStorage.setItem("proactive_capacity_last_day_strategy", today);
+                // Save AgentEngine's own deadline fingerprint
+                if (deadlineChanged) {
+                  localStorage.setItem("proactive_engine_deadline_fp", deadlineFingerprint);
+                }
+
+                // NOTE: Do NOT overwrite proactive_capacity_full_report or proactive_capacity_fingerprint_strategy
+                // here — those keys belong to StrategyView and are what prevents it from re-generating on every visit.
+                // Writing them from AgentEngine with a different AI response causes the flicker you see.
 
                 // FINAL SYNC (System Alerts Hub): Sort so most recent is at the top
                 const finalToasts = [...urgentAlerts].sort((a, b) => (b.alertedAt || 0) - (a.alertedAt || 0));
                 localStorage.setItem("proactive_active_toasts", JSON.stringify(finalToasts));
                 activeToastsRef.current = finalToasts;
-                window.dispatchEvent(new Event('notifications-updated'));
+                // Only notify when there are genuinely new alerts (ledgerChanged)
+                if (ledgerChanged) {
+                  window.dispatchEvent(new Event('notifications-updated'));
+                }
                 window.dispatchEvent(new Event('capacity-alerts-updated'));
             } else {
               // NO CHANGES: Keep existing alerts but make sure state is ready
