@@ -274,6 +274,9 @@ export default function DashboardHeader() {
   }, []);
 
   const handleTogglePanel = () => {
+    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
     if (!showNotificationPanel) {
       const prevRead = Number(localStorage.getItem("proactive_last_read_timestamp") || 0);
       setLastReadTimestamp(prevRead);
@@ -285,6 +288,9 @@ export default function DashboardHeader() {
   };
 
   const handleToggleCapacityHub = () => {
+    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
     if (!capacityHubOpen) {
       setUnreadCapacityCount(0);
       localStorage.setItem("proactive_last_capacity_read_timestamp", Date.now().toString());

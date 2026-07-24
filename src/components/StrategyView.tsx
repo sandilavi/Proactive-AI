@@ -213,6 +213,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
           });
           localStorage.setItem("proactive_task_estimates_v2", JSON.stringify(cleanedVault));
 
+          const existingCachedAlerts = JSON.parse(localStorage.getItem("proactive_capacity_alerts") || "{}");
           const busyInsights = data.insights.filter(i => i.status === "BUSY");
           busyInsights.forEach(i => {
             const dayMitigations = data.mitigations?.filter(m => m.date === i.date) || [];
@@ -228,16 +229,21 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                   estHours = updatedEstimates[mit.mitigationTaskName];
                 }
 
+                const alertId = `capacity-${i.date}-${mit.mitigationTaskName}`;
+                const prevAlert = (existingCachedAlerts.alerts || []).find((a: any) => a.id === alertId);
+                const alertedAtTs = prevAlert?.alertedAt || generatedAtTime;
+                const alertReadState = prevAlert?.read ?? false;
+
                 capacityAlerts.push({
-                  id: `capacity-${i.date}-${mit.mitigationTaskName}`,
-                  taskId: `capacity-${i.date}-${mit.mitigationTaskName}`,
+                  id: alertId,
+                  taskId: alertId,
                   taskName: `Busy Day on ${i.date}`,
                   urgency: "CAPACITY_BUSY",
                   deadline: i.date,
                   date: i.date,
-                  timestamp: new Date(generatedAtTime).toISOString(),
-                  alertedAt: generatedAtTime,
-                  read: false,
+                  timestamp: new Date(alertedAtTs).toISOString(),
+                  alertedAt: alertedAtTs,
+                  read: alertReadState,
                   suggestion: formattedSuggestion,
                   reason: mit.reason,
                   totalHours: i.totalHours,
@@ -250,7 +256,6 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                 });
               });
             } else {
-              // Deterministic Client Guard: Pick as many tasks (smallest first) as needed until load <= 9.99h
               let remainingLoad = i.totalHours || 0;
               const sortedTasks = [...(i.taskInsights || [])].sort((a, b) => a.estimatedHours - b.estimatedHours);
 
@@ -273,16 +278,21 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                   estHours = updatedEstimates[taskName];
                 }
 
+                const alertId = `capacity-${i.date}-${taskName}`;
+                const prevAlert = (existingCachedAlerts.alerts || []).find((a: any) => a.id === alertId);
+                const alertedAtTs = prevAlert?.alertedAt || generatedAtTime;
+                const alertReadState = prevAlert?.read ?? false;
+
                 capacityAlerts.push({
-                  id: `capacity-${i.date}-${taskName}`,
-                  taskId: `capacity-${i.date}-${taskName}`,
+                  id: alertId,
+                  taskId: alertId,
                   taskName: `Busy Day on ${i.date}`,
                   urgency: "CAPACITY_BUSY",
                   deadline: i.date,
                   date: i.date,
-                  timestamp: new Date(generatedAtTime).toISOString(),
-                  alertedAt: generatedAtTime,
-                  read: false,
+                  timestamp: new Date(alertedAtTs).toISOString(),
+                  alertedAt: alertedAtTs,
+                  read: alertReadState,
                   suggestion: formattedSuggestion,
                   reason: reason,
                   totalHours: i.totalHours,
@@ -303,7 +313,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
             alerts: capacityAlerts,
             summary: data.overallSummary,
             deadlineFingerprint: currentFingerprint,
-            updatedAt: generatedAtTime
+            updatedAt: existingCachedAlerts.updatedAt || generatedAtTime
           }));
           window.dispatchEvent(new Event('capacity-alerts-updated'));
           setReport(reportWithMeta);

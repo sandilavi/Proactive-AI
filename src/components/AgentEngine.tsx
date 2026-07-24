@@ -60,6 +60,57 @@ export default function AgentEngine() {
     }
   }, []);
 
+  const processUnnotifiedCapacityAlerts = useCallback(() => {
+    try {
+      const storedData = typeof window !== "undefined" ? localStorage.getItem("proactive_capacity_alerts") : null;
+      if (!storedData) return;
+      const parsed = JSON.parse(storedData);
+      const alerts: ProactiveAlert[] = parsed.alerts || [];
+      if (!alerts || alerts.length === 0) return;
+
+      const rejected = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("proactive_rejected_moves") || "[]") : [];
+      const filteredAlerts = alerts.filter(a => {
+        if (!a.mitigationTaskName || !a.mitigationTargetDate) return true;
+        const key = `${a.mitigationTaskName}|${a.date}|${a.mitigationTargetDate}`;
+        return !rejected.includes(key);
+      });
+
+      const persistedNotified = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("proactive_notified_ledger") || "[]") : [];
+      const newNotified = [...persistedNotified];
+      let ledgerChanged = false;
+
+      const toHumanDate = (iso: string) => {
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return iso;
+        return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+      };
+
+      filteredAlerts.forEach(alert => {
+        const hasSugg = alert.suggestion && alert.suggestion.length > 5;
+        const notificationKey = `${alert.id}-${alert.urgency}-${alert.suggestion?.slice(0, 50)}`;
+        
+        if (hasSugg && !newNotified.includes(notificationKey)) {
+          const cleanSugg = (alert.suggestion || "").replace(/\d{4}-\d{2}-\d{2}/g, (match) => toHumanDate(match));
+
+          fireOsNotification({
+            ...alert,
+            taskName: "ProActiveAI Intelligence",
+            suggestion: cleanSugg
+          });
+          
+          newNotified.push(notificationKey);
+          ledgerChanged = true;
+        }
+      });
+
+      if (ledgerChanged && typeof window !== "undefined") {
+        localStorage.setItem("proactive_notified_ledger", JSON.stringify(newNotified.slice(-50)));
+      }
+    } catch (e) {
+      console.error("Failed to process unnotified capacity alerts", e);
+    }
+  }, [fireOsNotification]);
+
   useEffect(() => {
     const urgencyRank: Record<ProactiveAlert["urgency"], number> = { 
       OVERDUE: 0, 
@@ -458,34 +509,6 @@ export default function AgentEngine() {
                     return !rejected.includes(key);
                 });
 
-                // Trigger OS Notification ONLY for alerts that survived the filter AND have a suggestion
-                const persistedNotified = JSON.parse(localStorage.getItem("proactive_notified_ledger") || "[]");
-                const newNotified = [...persistedNotified];
-                let ledgerChanged = false;
-
-                filteredCapacityAlerts.forEach(alert => {
-                    const hasSugg = alert.suggestion && alert.suggestion.length > 5;
-                    const notificationKey = `${alert.id}-${alert.urgency}-${alert.suggestion?.slice(0, 50)}`;
-                    
-                    if (hasSugg && !newNotified.includes(notificationKey)) {
-                        const cleanSugg = (alert.suggestion || "").replace(/\d{4}-\d{2}-\d{2}/g, (match) => toHumanDate(match));
-
-                        fireOsNotification({
-                          ...alert,
-                          taskName: "ProActiveAI Intelligence",
-                          suggestion: cleanSugg
-                        });
-                        
-                        newNotified.push(notificationKey);
-                        ledgerChanged = true;
-                    }
-                });
-
-                if (ledgerChanged) {
-                    // Keep ledger lean (last 50 keys)
-                    localStorage.setItem("proactive_notified_ledger", JSON.stringify(newNotified.slice(-50)));
-                }
-
                 // --- GARBAGE COLLECTION ---
                 // A 24h grace period prevents re-calculation if a task is briefly marked Done and then reverted.
                 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -519,15 +542,13 @@ export default function AgentEngine() {
                 // Purge rejected moves for dates in the past (No grace period needed for past dates)
                 const cleanedRejections = rejected.filter((key: string) => {
                   const parts = key.split('|');
-                  const datePart = parts[1] || ""; // Format: taskName|overloadDate|targetDate
+                  const datePart = parts[1] || "";
                   return datePart >= today; 
                 });
                 localStorage.setItem("proactive_rejected_moves", JSON.stringify(cleanedRejections));
 
                 localStorage.setItem("proactive_capacity_fingerprint", currentCapacityFingerprint);
 
-                // Use a DEDICATED key for AgentEngine's deadline fingerprint so it never conflicts
-                // with StrategyView's proactive_capacity_alerts.deadlineFingerprint (different format).
                 const deadlineFingerprint = freshTasks
                   .filter(t => t.status?.toLowerCase() !== "done")
                   .map(t => `${t.id}:${t.deadline ?? ""}`)
@@ -536,7 +557,6 @@ export default function AgentEngine() {
                 const storedEngineFP = localStorage.getItem("proactive_engine_deadline_fp") || "";
                 const deadlineChanged = deadlineFingerprint !== storedEngineFP;
 
-                // Read existing alerts to preserve updatedAt (don't bump unless deadlines actually changed)
                 const lastData = JSON.parse(localStorage.getItem("proactive_capacity_alerts") || "{}");
 
                 localStorage.setItem("proactive_capacity_alerts", JSON.stringify({
@@ -545,38 +565,32 @@ export default function AgentEngine() {
                     updatedAt: (deadlineChanged || !lastData.updatedAt) ? Date.now() : lastData.updatedAt
                 }));
 
-                // Save AgentEngine's own deadline fingerprint
                 if (deadlineChanged) {
                   localStorage.setItem("proactive_engine_deadline_fp", deadlineFingerprint);
                 }
 
-                // NOTE: Do NOT overwrite proactive_capacity_full_report or proactive_capacity_fingerprint_strategy
-                // here — those keys belong to StrategyView and are what prevents it from re-generating on every visit.
-                // Writing them from AgentEngine with a different AI response causes the flicker you see.
+                // CRITICAL FIX: Sync strategy fingerprint keys so StrategyView reuses today's cached analysis
+                localStorage.setItem("proactive_capacity_fingerprint_strategy", strategyTaskFingerprint);
+                localStorage.setItem("proactive_capacity_last_day_strategy", today);
 
-                // FINAL SYNC (System Alerts Hub): Sort so most recent is at the top
                 const finalToasts = [...urgentAlerts].sort((a, b) => (b.alertedAt || 0) - (a.alertedAt || 0));
                 localStorage.setItem("proactive_active_toasts", JSON.stringify(finalToasts));
                 activeToastsRef.current = finalToasts;
-                // Only notify when there are genuinely new alerts (ledgerChanged)
-                if (ledgerChanged) {
-                  window.dispatchEvent(new Event('notifications-updated'));
-                }
                 window.dispatchEvent(new Event('capacity-alerts-updated'));
             } else {
-              // NO CHANGES: Keep existing alerts but make sure state is ready
               const finalToasts = [...urgentAlerts].sort((a, b) => (b.alertedAt || 0) - (a.alertedAt || 0));
               localStorage.setItem("proactive_active_toasts", JSON.stringify(finalToasts));
               activeToastsRef.current = finalToasts;
               window.dispatchEvent(new Event('capacity-alerts-updated'));
             }
         } else {
-            // NO CHANGES: Keep existing alerts but make sure state is ready
             const finalToasts = [...urgentAlerts].sort((a, b) => (b.alertedAt || 0) - (a.alertedAt || 0));
             localStorage.setItem("proactive_active_toasts", JSON.stringify(finalToasts));
             activeToastsRef.current = finalToasts;
             window.dispatchEvent(new Event('capacity-alerts-updated'));
         }
+
+        processUnnotifiedCapacityAlerts();
 
       } catch (err) {
         console.error("AgentEngine Sync Error:", err);
@@ -589,8 +603,13 @@ export default function AgentEngine() {
     const handleManualRefresh = () => {
         syncNotifications();
     };
+    const handleCapacityUpdated = () => {
+        processUnnotifiedCapacityAlerts();
+    };
+
     window.addEventListener('notion-tasks-updated', handleManualRefresh);
     window.addEventListener('force-agent-refresh', handleManualRefresh);
+    window.addEventListener('capacity-alerts-updated', handleCapacityUpdated);
 
     if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
         Notification.requestPermission();
@@ -600,8 +619,9 @@ export default function AgentEngine() {
         clearInterval(intervalId);
         window.removeEventListener('notion-tasks-updated', handleManualRefresh);
         window.removeEventListener('force-agent-refresh', handleManualRefresh);
+        window.removeEventListener('capacity-alerts-updated', handleCapacityUpdated);
     };
-  }, [fireOsNotification]);
+  }, [fireOsNotification, processUnnotifiedCapacityAlerts]);
 
   return null;
 }
