@@ -576,17 +576,20 @@ export default function AgentEngine() {
                 const finalToasts = [...urgentAlerts].sort((a, b) => (b.alertedAt || 0) - (a.alertedAt || 0));
                 localStorage.setItem("proactive_active_toasts", JSON.stringify(finalToasts));
                 activeToastsRef.current = finalToasts;
+                window.dispatchEvent(new Event('notifications-updated'));
                 window.dispatchEvent(new Event('capacity-alerts-updated'));
             } else {
               const finalToasts = [...urgentAlerts].sort((a, b) => (b.alertedAt || 0) - (a.alertedAt || 0));
               localStorage.setItem("proactive_active_toasts", JSON.stringify(finalToasts));
               activeToastsRef.current = finalToasts;
+              window.dispatchEvent(new Event('notifications-updated'));
               window.dispatchEvent(new Event('capacity-alerts-updated'));
             }
         } else {
             const finalToasts = [...urgentAlerts].sort((a, b) => (b.alertedAt || 0) - (a.alertedAt || 0));
             localStorage.setItem("proactive_active_toasts", JSON.stringify(finalToasts));
             activeToastsRef.current = finalToasts;
+            window.dispatchEvent(new Event('notifications-updated'));
             window.dispatchEvent(new Event('capacity-alerts-updated'));
         }
 

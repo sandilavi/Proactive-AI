@@ -45,8 +45,14 @@ export default function HorizonView({ databases = [] }: HorizonViewProps) {
       const minutes = (absOffset % 60).toString().padStart(2, "0");
       const sign = offsetMinutes >= 0 ? "+" : "-";
       const userOffset = `${sign}${hours}:${minutes}`;
+      const v2Vault = JSON.parse(localStorage.getItem("proactive_task_estimates_v2") || "{}");
+      const persistentMemory: Record<string, number> = {};
+      Object.entries(v2Vault).forEach(([key, val]: [string, any]) => {
+        const numVal = val?.value !== undefined ? val.value : val;
+        if (typeof numVal === 'number') persistentMemory[key] = numVal;
+      });
 
-      const data = await generateHorizonRoadmap(goal, userOffset);
+      const data = await generateHorizonRoadmap(goal, userOffset, persistentMemory);
       setRoadmap(data);
       if (data.targetDbId) {
         setTargetDbId(data.targetDbId);
@@ -214,7 +220,7 @@ export default function HorizonView({ databases = [] }: HorizonViewProps) {
                           </div>
                           
                           <p className="text-xs text-slate-600 leading-relaxed">
-                            {task.reason}
+                            {task.description || task.reason}
                           </p>
                        </div>
                     </div>

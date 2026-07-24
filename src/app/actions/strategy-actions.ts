@@ -62,11 +62,21 @@ export async function getCapacityInsights(
 
   if (persistentMemory) {
     Object.entries(persistentMemory).forEach(([key, value]) => {
-      taskEstimationCache.set(key, value);
+      const cleanKey = key.trim().toLowerCase();
+      const matchedTask = tasks.find(t => t.id === key || t.name.trim().toLowerCase() === cleanKey);
+      if (matchedTask) {
+        taskEstimationCache.set(`${matchedTask.id}-${matchedTask.name}`, value);
+      } else {
+        taskEstimationCache.set(key, value);
+      }
     });
   }
 
-  const currentTaskKeys = new Set(tasks.map(t => `${t.id}-${t.name}`));
+  const currentTaskKeys = new Set([
+    ...tasks.map(t => `${t.id}-${t.name}`),
+    ...tasks.map(t => t.id),
+    ...tasks.map(t => t.name)
+  ]);
   for (const cachedKey of taskEstimationCache.keys()) {
     if (!currentTaskKeys.has(cachedKey)) {
       taskEstimationCache.delete(cachedKey);
@@ -133,32 +143,50 @@ async function runCapacityAnalysis(tasks: NotionTask[], userOffset: string): Pro
   });
 
   if (missingEstimations.length > 0) {
-    const estPrompt = missingEstimations.map(t => `- ID: "${t.id}", Name: "${t.name}"`).join("\n");
+    const estPrompt = missingEstimations.map((t, idx) => `Task ${idx + 1}: Name="${t.name}", ID="${t.id}"`).join("\n");
     try {
       const response = await groq.chat.completions.create({
         model: await getGroqModel(),
         temperature: 0,
         messages: [
-          { role: "system", content: "Estimate hours (0.5 to 8.0) for each task. Output strict JSON: { \"estimations\": [{ \"id\": \"task_id\", \"estimatedHours\": 2.5 }] }" },
+          { 
+            role: "system", 
+            content: `Analyze each task and estimate reasonable duration in hours (0.5 to 8.0) based on complexity. Output ONLY valid JSON in this exact structure:
+{
+  "estimations": [
+    { "id": "task_id", "task": "task_name", "estimatedHours": 2.5 }
+  ]
+}` 
+          },
           { role: "user", content: `TASKS TO ESTIMATE:\n${estPrompt}` }
         ]
       });
       const estMsg = response.choices[0]?.message;
       const rawContent = estMsg?.content || "";
       const estReasoning = (estMsg as any)?.reasoning || (estMsg as any)?.reasoning_content || "";
-      const data = extractJSON<{ estimations: { id: string, name?: string, estimatedHours: number }[] }>(rawContent);
+      const data = extractJSON<{ estimations: { id?: string, task?: string, name?: string, estimatedHours: number }[] }>(rawContent);
       const thinkMatch = rawContent.match(/<think>([\s\S]*?)<\/think>/);
       thinkContext = thinkMatch ? thinkMatch[1].trim() : (estReasoning ? estReasoning.trim() : "");
 
-      if (data && data.estimations) {
-        data.estimations.forEach(est => {
-          const cleanEstId = String(est.id).trim().replace(/['"]/g, '');
-          const matched = missingEstimations.find(t => {
-            const cleanTaskId = String(t.id).trim().replace(/['"]/g, '');
-            return cleanTaskId === cleanEstId || t.name.trim().toLowerCase() === String(est.name || "").trim().toLowerCase();
+      if (data && Array.isArray(data.estimations)) {
+        data.estimations.forEach((est, index) => {
+          const estId = String(est.id || "").trim().toLowerCase().replace(/['"]/g, '');
+          const estTaskName = String(est.task || est.name || "").trim().toLowerCase();
+          
+          const matched = missingEstimations.find((t, tIdx) => {
+            const taskId = String(t.id).trim().toLowerCase().replace(/['"]/g, '');
+            const taskName = t.name.trim().toLowerCase();
+            return (
+              (estId && taskId === estId) ||
+              (estTaskName && taskName === estTaskName) ||
+              (estId && taskName === estId) ||
+              (index === tIdx)
+            );
           });
+
           if (matched) {
-            taskEstimationCache.set(`${matched.id}-${matched.name}`, est.estimatedHours);
+            const hours = typeof est.estimatedHours === 'number' && est.estimatedHours > 0 ? est.estimatedHours : 1.5;
+            taskEstimationCache.set(`${matched.id}-${matched.name}`, hours);
           }
         });
       }

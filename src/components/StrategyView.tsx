@@ -451,15 +451,31 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
         {(() => {
           const now = new Date();
           const taskHoursMap = new Map<string, number>();
+          try {
+            const v2Vault = JSON.parse(localStorage.getItem("proactive_task_estimates_v2") || "{}");
+            Object.entries(v2Vault).forEach(([key, data]: [string, any]) => {
+              const val = data?.value !== undefined ? data.value : data;
+              if (typeof val === 'number') {
+                taskHoursMap.set(key, val);
+                taskHoursMap.set(normalizeName(key), val);
+              }
+            });
+          } catch (e) {}
+
           if (report?.knownEstimations) {
             Object.entries(report.knownEstimations).forEach(([name, hours]) => {
               taskHoursMap.set(name, hours);
+              taskHoursMap.set(normalizeName(name), hours);
             });
           }
           if (report?.insights) {
             report.insights.forEach(ins => {
               ins.taskInsights?.forEach(ti => {
-                if (ti.estimatedHours > 0) taskHoursMap.set(ti.name, ti.estimatedHours);
+                if (ti.estimatedHours > 0) {
+                  taskHoursMap.set(ti.name, ti.estimatedHours);
+                  taskHoursMap.set(normalizeName(ti.name), ti.estimatedHours);
+                  if (ti.id) taskHoursMap.set(ti.id, ti.estimatedHours);
+                }
               });
             });
           }
@@ -474,7 +490,6 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
           };
 
           const activeTasks = tasks.filter(t => t.status?.toLowerCase() !== 'done' && t.deadline && t.deadline !== 'No Deadline');
-          // Only show today-or-future dates as cards; overdue tasks are merged into today's card
           const uniqueDates = [...new Set(activeTasks.map(t => normalizeDate(t.deadline!)).filter(d => d >= todayStr))];
 
           if (!uniqueDates.includes(todayStr)) {
@@ -483,13 +498,50 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
 
           const displayList = uniqueDates.map(dateStr => {
             const aiInsight = report?.insights.find(ins => ins.date === dateStr);
-            if (aiInsight) return aiInsight;
+            const dayTasks = activeTasks.filter(t => {
+              const norm = normalizeDate(t.deadline!);
+              return dateStr === todayStr ? norm <= todayStr : norm === dateStr;
+            });
 
-            const dayTasks = activeTasks.filter(t => normalizeDate(t.deadline!) === dateStr);
-            const taskInsights = dayTasks.map(t => ({
-              name: t.name,
-              estimatedHours: taskHoursMap.get(t.name) || 0
-            }));
+            if (aiInsight) {
+              const activeNames = new Set(dayTasks.map(t => normalizeName(t.name)));
+              const validTaskInsights = (aiInsight.taskInsights || []).filter((ti: any) => activeNames.has(normalizeName(ti.name)));
+
+              const existingNames = new Set(validTaskInsights.map((ti: any) => normalizeName(ti.name)));
+              const missingTasks = dayTasks.filter(t => !existingNames.has(normalizeName(t.name)));
+
+              const updatedTaskInsights = [...validTaskInsights];
+              missingTasks.forEach(mt => {
+                const est = taskHoursMap.get(mt.id) || taskHoursMap.get(mt.name) || taskHoursMap.get(normalizeName(mt.name)) || 1.5;
+                const norm = normalizeDate(mt.deadline!);
+                updatedTaskInsights.push({
+                  id: mt.id,
+                  name: mt.name,
+                  estimatedHours: est,
+                  isOverdue: norm < todayStr,
+                  originalDeadline: mt.deadline
+                });
+              });
+
+              const newTotalHours = updatedTaskInsights.reduce((sum: number, ti: any) => sum + (ti.estimatedHours || 0), 0);
+              return {
+                ...aiInsight,
+                totalHours: newTotalHours,
+                status: newTotalHours >= 10 ? "BUSY" as const : "SAFE" as const,
+                taskInsights: updatedTaskInsights
+              };
+            }
+
+            const taskInsights = dayTasks.map(t => {
+              const norm = normalizeDate(t.deadline!);
+              return {
+                id: t.id,
+                name: t.name,
+                estimatedHours: taskHoursMap.get(t.id) || taskHoursMap.get(t.name) || taskHoursMap.get(normalizeName(t.name)) || 1.5,
+                isOverdue: norm < todayStr,
+                originalDeadline: t.deadline
+              };
+            });
             const totalHours = taskInsights.reduce((sum, t) => sum + t.estimatedHours, 0);
             return {
               date: dateStr,
@@ -670,7 +722,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                             )}
                           </div>
                           <div className="flex items-center gap-2.5 mt-0.5">
-                            <span className="text-[9px] font-bold text-slate-400 uppercase">Est. time: {t.estimatedHours}h</span>
+                            <span className="text-[9px] font-bold text-slate-400 uppercase">Est. time: {t.estimatedHours || 1.5}h</span>
                             {(wasDueStr || dueTimeStr) && (
                               <span className={`text-[9px] font-medium whitespace-nowrap ${(wasDueStr || isTimePast) ? 'text-red-400' : 'text-slate-500'}`}>
                                 {wasDueStr && dueTimeStr

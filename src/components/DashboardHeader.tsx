@@ -261,15 +261,22 @@ export default function DashboardHeader() {
       }
     };
 
+    const handleCombinedSync = () => {
+      syncCapacity();
+      syncToasts();
+    };
+
     syncCapacity();
-    window.addEventListener('storage', syncToasts);
-    window.addEventListener('notifications-updated', syncToasts);
-    window.addEventListener('capacity-alerts-updated', syncCapacity);
+    syncToasts();
+
+    window.addEventListener('storage', handleCombinedSync);
+    window.addEventListener('notifications-updated', handleCombinedSync);
+    window.addEventListener('capacity-alerts-updated', handleCombinedSync);
     
     return () => {
-      window.removeEventListener('storage', syncToasts);
-      window.removeEventListener('notifications-updated', syncToasts);
-      window.removeEventListener('capacity-alerts-updated', syncCapacity);
+      window.removeEventListener('storage', handleCombinedSync);
+      window.removeEventListener('notifications-updated', handleCombinedSync);
+      window.removeEventListener('capacity-alerts-updated', handleCombinedSync);
     };
   }, []);
 
