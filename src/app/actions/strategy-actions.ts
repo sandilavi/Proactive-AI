@@ -337,7 +337,7 @@ async function runCapacityAnalysis(tasks: NotionTask[], userOffset: string): Pro
         }
       }
 
-      // GUARANTEED SYSTEM GUARD FALLBACK: Always runs — for every busy day without a valid AI mitigation
+      // GUARANTEED SYSTEM FALLBACK: Always runs — for every busy day without a valid AI mitigation
       const busyDaysNeedingMitigation = busyDays.filter(d => d.totalHours >= 10 && !prunedMitigations.some(m => m.date === d.date));
       if (busyDaysNeedingMitigation.length > 0) {
         busyDaysNeedingMitigation.forEach(d => {

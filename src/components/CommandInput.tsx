@@ -56,7 +56,7 @@ function formatDeadline(dateStr: string): string {
     const minutes = String(date.getMinutes()).padStart(2, "0");
     const ampm = hours >= 12 ? "PM" : "AM";
     hours = hours % 12 || 12;
-    return `${yyyy}-${mm}-${dd} ${hours}.${minutes}${ampm}`;
+    return `${yyyy}-${mm}-${dd}, ${hours}.${minutes}${ampm}`;
   } catch {
     return dateStr;
   }
@@ -123,6 +123,12 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
   const [message, setMessage] = useState("");
   const [taskList, setTaskList] = useState<NotionTask[] | null>(initialTasks ?? null);
   const [suggestion, setSuggestion] = useState<AgentSuggestion | null>(null);
+
+  // Trigger notification engine check immediately as soon as Assistant page mounts
+  useEffect(() => {
+    window.dispatchEvent(new Event('notion-tasks-updated'));
+  }, []);
+
   // Proactive Suggestion Logic (Client-side to capture local timezone)
   useEffect(() => {
     const fetchLocalSuggestion = async () => {
@@ -739,7 +745,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                     Auto-Synced
                  </span>
                   <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2.5 py-1 rounded border border-blue-100 uppercase">
-                    {taskList.length} Targets
+                    {taskList.length} Tasks
                  </span>
               </div>
             </div>
@@ -749,16 +755,58 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                 <table className="w-full text-left border-collapse text-xs">
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200">
-                      <th className="px-4 py-2 text-slate-500 font-bold uppercase tracking-wider">Objective</th>
-                      <th className="px-4 py-2 text-slate-500 font-bold uppercase tracking-wider">Stage</th>
-                      <th className="px-4 py-2 text-slate-500 font-bold uppercase tracking-wider">Timeline</th>
+                      <th className="px-4 py-2 text-slate-500 font-bold uppercase tracking-wider">Task Name</th>
+                      <th className="px-4 py-2 text-slate-500 font-bold uppercase tracking-wider">Status</th>
+                      <th className="px-4 py-2 text-slate-500 font-bold uppercase tracking-wider">Deadline</th>
                       {databaseCount > 1 && (
                         <th className="px-4 py-2 text-slate-500 font-bold uppercase tracking-wider">Origin</th>
                       )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
-                    {taskList.map((task) => {
+                    {(() => {
+                      const activeTasks = taskList.filter(t => {
+                        const s = (t.status || "").toUpperCase();
+                        return !s.includes("DONE") && !s.includes("COMPLETE");
+                      });
+                      const doneTasks = taskList.filter(t => {
+                        const s = (t.status || "").toUpperCase();
+                        return s.includes("DONE") || s.includes("COMPLETE");
+                      });
+
+                      activeTasks.sort((a, b) => {
+                        const dA = a.deadline || "";
+                        const dB = b.deadline || "";
+
+                        const hasTimeA = dA.includes('T') || dA.includes(':');
+                        const hasTimeB = dB.includes('T') || dB.includes(':');
+
+                        const dateA = dA ? dA.split('T')[0] : "9999-99-99";
+                        const dateB = dB ? dB.split('T')[0] : "9999-99-99";
+
+                        // 1. Primary: Sort by Date
+                        if (dateA !== dateB) {
+                          return dateA.localeCompare(dateB);
+                        }
+
+                        // 2. Secondary: Tasks with specific times come BEFORE date-only tasks
+                        if (hasTimeA && !hasTimeB) return -1;
+                        if (!hasTimeA && hasTimeB) return 1;
+
+                        // 3. Tertiary: Sort by earliest time first (e.g. 9am before 1pm)
+                        const msA = dA ? new Date(dA).getTime() : Infinity;
+                        const msB = dB ? new Date(dB).getTime() : Infinity;
+                        return msA - msB;
+                      });
+
+                      doneTasks.sort((a, b) => {
+                        const timeA = a.deadline ? new Date(a.deadline).getTime() : 0;
+                        const timeB = b.deadline ? new Date(b.deadline).getTime() : 0;
+                        return timeB - timeA; // Newest deadline first, oldest last
+                      });
+
+                      return [...activeTasks, ...doneTasks];
+                    })().map((task) => {
                        const status = (task.status || "Planned").toUpperCase();
                        const isDone = status.includes("DONE") || status.includes("COMPLETE");
                        const isDoing = status.includes("DOING") || status.includes("PROGRESS");
@@ -783,7 +831,7 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                           <td className="px-4 py-3 whitespace-nowrap">
                             <span className="text-slate-600 font-medium">
                               {task.deadline ? (
-                                 <span className="text-slate-800">{formatDeadline(task.deadline).split(' ')[0]}</span>
+                                 <span className="text-slate-800">{formatDeadline(task.deadline)}</span>
                               ) : <span className="text-slate-400 italic font-normal">No deadline</span>}
                             </span>
                           </td>

@@ -49,7 +49,7 @@ function formatDeadline(dateStr: string): string {
     const minutes = String(date.getMinutes()).padStart(2, "0");
     const ampm = hours >= 12 ? "PM" : "AM";
     hours = hours % 12 || 12;
-    return `${yyyy}-${mm}-${dd} ${hours}.${minutes}${ampm}`;
+    return `${yyyy}-${mm}-${dd}, ${hours}.${minutes}${ampm}`;
   } catch {
     return dateStr;
   }
@@ -66,6 +66,7 @@ export default function DashboardHeader() {
   const [capacityHubOpen, setCapacityHubOpen] = useState(false);
   const [capacityData, setCapacityData] = useState<{ alerts: any[], summary: string, updatedAt: number } | null>(null);
   const [unreadCapacityCount, setUnreadCapacityCount] = useState(0);
+  const [lastReadCapacityTimestamp, setLastReadCapacityTimestamp] = useState<number>(0);
   const [hasOverload, setHasOverload] = useState(false);
   const [mitigationStates, setMitigationStates] = useState<Record<string, 'idle' | 'loading' | 'done' | 'rejected'>>({});
   const [resolutionShield, setResolutionShield] = useState<Record<string, number>>({});
@@ -247,15 +248,16 @@ export default function DashboardHeader() {
           setCapacityData(parsed);
           setHasOverload(filteredAlerts.some((a: any) => a.status === "BUSY"));
 
-          // Only show unread badge if the panel is currently closed AND new alerts arrived since last read
-          setUnreadCapacityCount(prev => {
+          // Only show unread badge for newly arrived alerts since last read timestamp
+          setUnreadCapacityCount(() => {
             const lastReadTime = Number(localStorage.getItem("proactive_last_capacity_read_timestamp") || 0);
             const isHubOpen = document.querySelector("[data-capacity-hub-open='true']") !== null;
             if (isHubOpen) return 0;
-            if (parsed.updatedAt > lastReadTime + 2000 && validAlerts.length > 0) {
-              return validAlerts.length;
-            }
-            return prev === 0 ? 0 : prev;
+            const newCapacityUnreads = filteredAlerts.filter((a: any) => {
+              const alertTime = typeof a.alertedAt === 'number' ? a.alertedAt : new Date(a.alertedAt || a.timestamp || 0).getTime();
+              return alertTime > lastReadTime;
+            }).length;
+            return newCapacityUnreads;
           });
         } catch {}
       }
@@ -299,6 +301,8 @@ export default function DashboardHeader() {
       Notification.requestPermission();
     }
     if (!capacityHubOpen) {
+      const prevRead = Number(localStorage.getItem("proactive_last_capacity_read_timestamp") || 0);
+      setLastReadCapacityTimestamp(prevRead);
       setUnreadCapacityCount(0);
       localStorage.setItem("proactive_last_capacity_read_timestamp", Date.now().toString());
     }
@@ -332,11 +336,11 @@ export default function DashboardHeader() {
   };
 
   const urgencyStyles: Record<AgentAlert["urgency"], { border: string; bg: string; newBg: string; text: string; label: string; badge: string }> = {
-    OVERDUE:  { border: "border-red-200", bg: "bg-red-50", newBg: "bg-red-100", text: "text-red-950", label: "Overdue", badge: "bg-red-50 text-red-700 border-red-200" },
-    TODAY:    { border: "border-orange-200", bg: "bg-orange-50", newBg: "bg-orange-100", text: "text-orange-950", label: "Due Today", badge: "bg-orange-50 text-orange-700 border-orange-200" },
-    TOMORROW: { border: "border-amber-200", bg: "bg-amber-50", newBg: "bg-amber-100", text: "text-amber-950", label: "Due Tomorrow", badge: "bg-amber-50 text-amber-700 border-amber-200" },
-    SOON:     { border: "border-blue-200", bg: "bg-blue-50", newBg: "bg-blue-100", text: "text-blue-950", label: "Due Soon", badge: "bg-blue-50 text-blue-700 border-blue-200" },
-    CAPACITY_BUSY: { border: "border-indigo-200", bg: "bg-indigo-50", newBg: "bg-indigo-100", text: "text-indigo-950", label: "Busy Day", badge: "bg-indigo-50 text-indigo-700 border-indigo-200" },
+    OVERDUE:  { border: "border-red-200", bg: "bg-white", newBg: "bg-red-100/90 border-red-300", text: "text-red-950", label: "Overdue", badge: "bg-red-50 text-red-700 border-red-200" },
+    TODAY:    { border: "border-orange-200", bg: "bg-white", newBg: "bg-orange-100/90 border-orange-300", text: "text-orange-950", label: "Due Today", badge: "bg-orange-50 text-orange-700 border-orange-200" },
+    TOMORROW: { border: "border-amber-200", bg: "bg-white", newBg: "bg-amber-100/90 border-amber-300", text: "text-amber-950", label: "Due Tomorrow", badge: "bg-amber-50 text-amber-700 border-amber-200" },
+    SOON:     { border: "border-blue-200", bg: "bg-white", newBg: "bg-blue-100/90 border-blue-300", text: "text-blue-950", label: "Due Soon", badge: "bg-blue-50 text-blue-700 border-blue-200" },
+    CAPACITY_BUSY: { border: "border-indigo-200", bg: "bg-white", newBg: "bg-indigo-100/90 border-indigo-300", text: "text-indigo-950", label: "Busy Day", badge: "bg-indigo-50 text-indigo-700 border-indigo-200" },
   };
 
   return (
@@ -374,8 +378,29 @@ export default function DashboardHeader() {
 
           {capacityHubOpen && (
             <div data-capacity-hub-open="true" className="absolute top-10 right-0 w-80 max-h-[480px] bg-white border border-slate-200 rounded shadow-md z-50 flex flex-col">
-               <div className="p-3 bg-slate-900 text-white font-bold text-xs">
-                 Strategic Capacity Insights
+               <div className="p-3 bg-slate-900 text-white font-bold text-xs flex justify-between items-center">
+                 <span>Strategic Capacity Insights</span>
+                 {capacityData && capacityData.alerts && capacityData.alerts.length > 0 && (
+                   <button
+                     onClick={() => {
+                       if (capacityData?.alerts) {
+                         const currentRejected = JSON.parse(localStorage.getItem("proactive_rejected_moves") || "[]");
+                         capacityData.alerts.forEach((alert: any) => {
+                           if (alert.mitigationTaskName && alert.mitigationTargetDate) {
+                             const rejectedKey = `${alert.mitigationTaskName}|${alert.date}|${alert.mitigationTargetDate}`;
+                             currentRejected.push(rejectedKey);
+                           }
+                         });
+                         localStorage.setItem("proactive_rejected_moves", JSON.stringify(currentRejected));
+                       }
+                       setCapacityData(prev => prev ? { ...prev, alerts: [] } : null);
+                       setUnreadCapacityCount(0);
+                     }}
+                     className="text-[10px] font-bold text-slate-300 hover:text-white uppercase tracking-wider cursor-pointer transition-colors"
+                   >
+                     CLEAR ALL
+                   </button>
+                 )}
                </div>
 
                <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-50 max-h-[360px]">
@@ -395,6 +420,11 @@ export default function DashboardHeader() {
                         const expiry = resolutionShield[shieldKey];
                         return !expiry || Date.now() > expiry;
                       })
+                      .sort((a: any, b: any) => {
+                        const timeA = typeof a.alertedAt === 'number' ? a.alertedAt : new Date(a.alertedAt || a.timestamp || 0).getTime();
+                        const timeB = typeof b.alertedAt === 'number' ? b.alertedAt : new Date(b.alertedAt || b.timestamp || 0).getTime();
+                        return timeB - timeA; // Newest first (top), oldest last (bottom)
+                      })
                       .map((alert: any) => {
                         const isBusy = alert.status === "BUSY";
                         const dateObj = new Date(alert.date);
@@ -405,23 +435,32 @@ export default function DashboardHeader() {
                         const alertedMs = alert.alertedAt || capacityData.updatedAt || Date.now();
                         const timeStr = new Date(alertedMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                         const formattedTime = getFormattedAlertTime(alertedMs, timeStr);
+                        const isNew = alertedMs > lastReadCapacityTimestamp;
+                        const cardBgClass = isNew 
+                          ? (isBusy ? 'bg-orange-100/90 border-orange-300' : 'bg-indigo-100/90 border-indigo-300')
+                          : 'bg-white border-slate-200';
 
                         return (
-                          <div key={alertId} className={`p-3 bg-white border rounded shadow-sm border-l-4 ${
+                          <div key={alertId} className={`p-3 border rounded shadow-sm border-l-4 ${cardBgClass} ${
                             String(alertId).startsWith('overdue-') ? 'border-l-red-500' : isBusy ? 'border-l-orange-500' : 'border-l-indigo-500'
                           }`}>
                              <div className="flex items-center justify-between mb-1.5">
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-1.5">
                                   <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${isBusy ? 'bg-orange-50 text-orange-700 border-orange-100' : 'bg-indigo-50 text-indigo-700 border-indigo-200'}`}>
                                     {(alert.estimatedHours !== undefined ? alert.estimatedHours : (alert.totalHours || 0)).toFixed(1)}h
                                   </span>
                                   {alert.source === "FALLBACK" ? (
                                     <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300" title="Generated by System Capacity Guard fallback">
-                                      🛡 System Guard
+                                      🛡 System
                                     </span>
                                   ) : (
                                     <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 border border-indigo-200" title="Generated by AI Model">
                                       ⚡ AI Model
+                                    </span>
+                                  )}
+                                  {isNew && (
+                                    <span className="text-[8px] font-bold px-1 rounded bg-indigo-600 text-white animate-pulse">
+                                      New
                                     </span>
                                   )}
                                 </div>
@@ -544,17 +583,17 @@ export default function DashboardHeader() {
                     .map(toast => {
                       const s = urgencyStyles[toast.urgency];
                       const isNew = (toast.alertedAt || 0) > lastReadTimestamp;
-                      const cardBg = isNew ? s.newBg : s.bg;
+                      const cardBg = isNew ? s.newBg : 'bg-white border-slate-200';
                       
                       return (
-                        <div key={toast.id} className={`p-3 bg-white border rounded shadow-sm relative ${s.border} ${cardBg}`}>
+                        <div key={toast.id} className={`p-3 border rounded shadow-sm relative ${cardBg}`}>
                           <div className="flex items-center justify-between mb-1.5">
                             <div className="flex items-center gap-1.5">
                               <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${s.badge}`}>
                                 {s.label}
                               </span>
                               {isNew && (
-                                <span className="text-[8px] font-bold px-1 rounded bg-indigo-600 text-white">New</span>
+                                <span className="text-[8px] font-bold px-1 rounded bg-indigo-600 text-white animate-pulse">New</span>
                               )}
                             </div>
                             <span className="text-[8px] text-slate-400 font-semibold">

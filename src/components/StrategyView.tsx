@@ -383,6 +383,121 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
 
   const activeTasks = (syncedTasks || []).filter(t => t.status?.toLowerCase() !== "done");
 
+  const now = new Date();
+  const taskHoursMap = new Map<string, number>();
+  try {
+    const v2Vault = JSON.parse(localStorage.getItem("proactive_task_estimates_v2") || "{}");
+    Object.entries(v2Vault).forEach(([key, data]: [string, any]) => {
+      const val = data?.value !== undefined ? data.value : data;
+      if (typeof val === 'number') {
+        taskHoursMap.set(key, val);
+        taskHoursMap.set(normalizeName(key), val);
+      }
+    });
+  } catch (e) {}
+
+  if (report?.knownEstimations) {
+    Object.entries(report.knownEstimations).forEach(([name, hours]) => {
+      taskHoursMap.set(name, hours);
+      taskHoursMap.set(normalizeName(name), hours);
+    });
+  }
+  if (report?.insights) {
+    report.insights.forEach(ins => {
+      ins.taskInsights?.forEach(ti => {
+        if (ti.estimatedHours > 0) {
+          taskHoursMap.set(ti.name, ti.estimatedHours);
+          taskHoursMap.set(normalizeName(ti.name), ti.estimatedHours);
+          if (ti.id) taskHoursMap.set(ti.id, ti.estimatedHours);
+        }
+      });
+    });
+  }
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+  const normalizeDate = (deadline: string): string => {
+    const parsed = new Date(deadline);
+    if (!isNaN(parsed.getTime())) {
+      return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`;
+    }
+    return deadline.split('T')[0];
+  };
+
+  const activeNotionTasks = (syncedTasks || []).filter(t => t.status?.toLowerCase() !== 'done' && t.deadline && t.deadline !== 'No Deadline');
+  const uniqueDates = [...new Set(activeNotionTasks.map(t => normalizeDate(t.deadline!)).filter(d => d >= todayStr))];
+
+  if (!uniqueDates.includes(todayStr)) {
+    uniqueDates.push(todayStr);
+  }
+
+  const displayList = uniqueDates.map(dateStr => {
+    const aiInsight = report?.insights.find(ins => ins.date === dateStr);
+    const dayTasks = activeNotionTasks.filter(t => {
+      const norm = normalizeDate(t.deadline!);
+      return dateStr === todayStr ? norm <= todayStr : norm === dateStr;
+    });
+
+    if (aiInsight) {
+      const activeNames = new Set(dayTasks.map(t => normalizeName(t.name)));
+      const validTaskInsights = (aiInsight.taskInsights || []).filter((ti: any) => activeNames.has(normalizeName(ti.name)));
+
+      const existingNames = new Set(validTaskInsights.map((ti: any) => normalizeName(ti.name)));
+      const missingTasks = dayTasks.filter(t => !existingNames.has(normalizeName(t.name)));
+
+      const updatedTaskInsights = [...validTaskInsights];
+      missingTasks.forEach(mt => {
+        const est = taskHoursMap.get(mt.id) || taskHoursMap.get(mt.name) || taskHoursMap.get(normalizeName(mt.name)) || 1.5;
+        const norm = normalizeDate(mt.deadline!);
+        updatedTaskInsights.push({
+          id: mt.id,
+          name: mt.name,
+          estimatedHours: est,
+          isOverdue: norm < todayStr,
+          originalDeadline: mt.deadline
+        });
+      });
+
+      const newTotalHours = updatedTaskInsights.reduce((sum: number, ti: any) => sum + (ti.estimatedHours || 0), 0);
+      return {
+        ...aiInsight,
+        totalHours: newTotalHours,
+        status: newTotalHours >= 10 ? ("BUSY" as const) : ("SAFE" as const),
+        taskInsights: updatedTaskInsights
+      };
+    }
+
+    const taskInsights = dayTasks.map(t => {
+      const norm = normalizeDate(t.deadline!);
+      return {
+        id: t.id,
+        name: t.name,
+        estimatedHours: taskHoursMap.get(t.id) || taskHoursMap.get(t.name) || taskHoursMap.get(normalizeName(t.name)) || 1.5,
+        isOverdue: norm < todayStr,
+        originalDeadline: t.deadline
+      };
+    });
+    const totalHours = taskInsights.reduce((sum, t) => sum + t.estimatedHours, 0);
+    return {
+      date: dateStr,
+      totalHours,
+      status: totalHours >= 10 ? ("BUSY" as const) : ("SAFE" as const),
+      taskInsights
+    };
+  });
+
+  const sortedList = displayList.sort((a, b) => {
+    const dateA = new Date(a.date).getTime();
+    const dateB = new Date(b.date).getTime();
+    if (isNaN(dateA)) return -1;
+    if (isNaN(dateB)) return 1;
+    return dateA - dateB;
+  });
+
+  const busyDaysCount = sortedList.filter(d => d.status === "BUSY" || d.totalHours >= 10).length;
+  const overallSummaryText = busyDaysCount > 0
+    ? `I've detected ${busyDaysCount} busy ${busyDaysCount === 1 ? 'day' : 'days'} in your schedule. Proactive rebalancing recommendations are available.`
+    : (report?.overallSummary || "Your schedule is perfectly balanced! No busy days detected.");
+
   return (
     <div className="space-y-6">
       {/* Top Header Card: Minimalist Strategy Overlook */}
@@ -396,17 +511,17 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
               </span>
             </div>
             <h2 className="text-lg font-bold tracking-wide">
-              {report.overallSummary}
+              {overallSummaryText}
             </h2>
             <div className="flex gap-8 pt-2">
               <div className="flex flex-col">
                 <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider mb-1">Active Queue</span>
-                <span className="text-xl font-bold">{activeTasks.length} Tasks</span>
+                <span className="text-xl font-bold">{activeTasks.length} {activeTasks.length === 1 ? 'Task' : 'Tasks'}</span>
               </div>
               <div className="flex flex-col border-l border-slate-700 pl-6">
                 <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider mb-1">Busy Days</span>
                 <span className="text-xl font-bold text-orange-400">
-                  {(report?.insights || []).filter(i => i.status === "BUSY").length} Days
+                  {busyDaysCount} {busyDaysCount === 1 ? 'Day' : 'Days'}
                 </span>
               </div>
             </div>
@@ -418,7 +533,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
           </div>
         </div>
 
-        {report.thinkContext && (
+        {report?.thinkContext && (
           <div className="mt-4 pt-4 border-t border-slate-700 w-full col-span-full">
             <button
               type="button"
@@ -448,118 +563,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
 
       {/* Grid: Individual date-based analytical cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {(() => {
-          const now = new Date();
-          const taskHoursMap = new Map<string, number>();
-          try {
-            const v2Vault = JSON.parse(localStorage.getItem("proactive_task_estimates_v2") || "{}");
-            Object.entries(v2Vault).forEach(([key, data]: [string, any]) => {
-              const val = data?.value !== undefined ? data.value : data;
-              if (typeof val === 'number') {
-                taskHoursMap.set(key, val);
-                taskHoursMap.set(normalizeName(key), val);
-              }
-            });
-          } catch (e) {}
-
-          if (report?.knownEstimations) {
-            Object.entries(report.knownEstimations).forEach(([name, hours]) => {
-              taskHoursMap.set(name, hours);
-              taskHoursMap.set(normalizeName(name), hours);
-            });
-          }
-          if (report?.insights) {
-            report.insights.forEach(ins => {
-              ins.taskInsights?.forEach(ti => {
-                if (ti.estimatedHours > 0) {
-                  taskHoursMap.set(ti.name, ti.estimatedHours);
-                  taskHoursMap.set(normalizeName(ti.name), ti.estimatedHours);
-                  if (ti.id) taskHoursMap.set(ti.id, ti.estimatedHours);
-                }
-              });
-            });
-          }
-          const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-
-          const normalizeDate = (deadline: string): string => {
-            const parsed = new Date(deadline);
-            if (!isNaN(parsed.getTime())) {
-              return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`;
-            }
-            return deadline.split('T')[0];
-          };
-
-          const activeTasks = tasks.filter(t => t.status?.toLowerCase() !== 'done' && t.deadline && t.deadline !== 'No Deadline');
-          const uniqueDates = [...new Set(activeTasks.map(t => normalizeDate(t.deadline!)).filter(d => d >= todayStr))];
-
-          if (!uniqueDates.includes(todayStr)) {
-            uniqueDates.push(todayStr);
-          }
-
-          const displayList = uniqueDates.map(dateStr => {
-            const aiInsight = report?.insights.find(ins => ins.date === dateStr);
-            const dayTasks = activeTasks.filter(t => {
-              const norm = normalizeDate(t.deadline!);
-              return dateStr === todayStr ? norm <= todayStr : norm === dateStr;
-            });
-
-            if (aiInsight) {
-              const activeNames = new Set(dayTasks.map(t => normalizeName(t.name)));
-              const validTaskInsights = (aiInsight.taskInsights || []).filter((ti: any) => activeNames.has(normalizeName(ti.name)));
-
-              const existingNames = new Set(validTaskInsights.map((ti: any) => normalizeName(ti.name)));
-              const missingTasks = dayTasks.filter(t => !existingNames.has(normalizeName(t.name)));
-
-              const updatedTaskInsights = [...validTaskInsights];
-              missingTasks.forEach(mt => {
-                const est = taskHoursMap.get(mt.id) || taskHoursMap.get(mt.name) || taskHoursMap.get(normalizeName(mt.name)) || 1.5;
-                const norm = normalizeDate(mt.deadline!);
-                updatedTaskInsights.push({
-                  id: mt.id,
-                  name: mt.name,
-                  estimatedHours: est,
-                  isOverdue: norm < todayStr,
-                  originalDeadline: mt.deadline
-                });
-              });
-
-              const newTotalHours = updatedTaskInsights.reduce((sum: number, ti: any) => sum + (ti.estimatedHours || 0), 0);
-              return {
-                ...aiInsight,
-                totalHours: newTotalHours,
-                status: newTotalHours >= 10 ? "BUSY" as const : "SAFE" as const,
-                taskInsights: updatedTaskInsights
-              };
-            }
-
-            const taskInsights = dayTasks.map(t => {
-              const norm = normalizeDate(t.deadline!);
-              return {
-                id: t.id,
-                name: t.name,
-                estimatedHours: taskHoursMap.get(t.id) || taskHoursMap.get(t.name) || taskHoursMap.get(normalizeName(t.name)) || 1.5,
-                isOverdue: norm < todayStr,
-                originalDeadline: t.deadline
-              };
-            });
-            const totalHours = taskInsights.reduce((sum, t) => sum + t.estimatedHours, 0);
-            return {
-              date: dateStr,
-              totalHours,
-              status: totalHours >= 10 ? "BUSY" as const : "SAFE" as const,
-              taskInsights
-            };
-          });
-
-          const sortedList = displayList.sort((a, b) => {
-            const dateA = new Date(a.date).getTime();
-            const dateB = new Date(b.date).getTime();
-            if (isNaN(dateA)) return -1;
-            if (isNaN(dateB)) return 1;
-            return dateA - dateB;
-          });
-
-          return sortedList.map((insight, idx) => {
+        {sortedList.map((insight, idx) => {
             const isBusy = insight.status === "BUSY";
             const date = new Date(insight.date);
             const isInvalid = isNaN(date.getTime());
@@ -748,8 +752,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
 
               </div>
             );
-          });
-        })()}
+          })}
       </div>
     </div>
   );
