@@ -180,7 +180,16 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
         const sign = offsetMinutes >= 0 ? "+" : "-";
         const userOffset = `${sign}${hours}:${minutes}`;
 
-        const newSuggestion = await getAgentSuggestion(taskList || initialTasks || [], userOffset);
+        let prevSuggestionObj: AgentSuggestion | null = null;
+        if (cached) {
+          try { prevSuggestionObj = JSON.parse(cached); } catch {}
+        }
+
+        const newSuggestion = await getAgentSuggestion(
+          taskList || initialTasks || [], 
+          userOffset,
+          prevSuggestionObj
+        );
         if (newSuggestion) {
           let finalSuggestion = newSuggestion;
 

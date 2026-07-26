@@ -33,7 +33,7 @@ export interface AgentResponse {
     date?: string;
     taskId?: string;
     attemptedName?: string;
-    targetDatabase?: string; 
+    targetDatabase?: string;
     planSummary?: string;
     plan?: Array<{
       title: string;
@@ -110,7 +110,11 @@ export async function processUserPrompt(prompt: string, taskContext: string, use
   return { ...parsed, thinkContext: thinkContext || (parsed as any)?.thinkContext || "" } as any;
 }
 
-export async function getAgentSuggestion(tasks: NotionTask[], userOffset: string = "+00:00"): Promise<AgentSuggestion | null> {
+export async function getAgentSuggestion(
+  tasks: NotionTask[],
+  userOffset: string = "+00:00",
+  previousSuggestion?: AgentSuggestion | null
+): Promise<AgentSuggestion | null> {
   const { now, localNow } = getUserLocalTime(userOffset);
   const dayName = localNow.toLocaleDateString('en-US', { weekday: 'long' });
 
@@ -124,6 +128,28 @@ export async function getAgentSuggestion(tasks: NotionTask[], userOffset: string
     })
     .join("\n");
 
+  // Continuity Context: Check if the previous recommendation is still active in the task list
+  let previousContextPrompt = "";
+  if (previousSuggestion && previousSuggestion.suggestion) {
+    const isPrevStillActive = activeTasks.some(
+      t => t.name.toLowerCase().trim() === previousSuggestion.suggestion.toLowerCase().trim()
+    );
+
+    if (isPrevStillActive) {
+      previousContextPrompt = `
+        PREVIOUS RECOMMENDATION:
+        - Task Name: "${previousSuggestion.suggestion}"
+        - Previous Priority: "${previousSuggestion.priority || 'HIGH'}"
+        
+        DECISION STABILITY & CONTINUITY PRINCIPLE:
+        - The user was previously recommended to work on "${previousSuggestion.suggestion}".
+        - That task is STILL ACTIVE in their task list.
+        - PRESERVE "${previousSuggestion.suggestion}" as your recommendation UNLESS there is a major, compelling shift (such as a new meeting happening in the next 1-2 hours, or a task becoming critical).
+        - Do NOT flip-flop or change your recommendation between tasks of similar priority. Maintain user focus!
+      `;
+    }
+  }
+
   const response = await groq.chat.completions.create({
     model: await getGroqModel(),
     temperature: 0,
@@ -133,6 +159,7 @@ export async function getAgentSuggestion(tasks: NotionTask[], userOffset: string
         content: `You are an Expert Executive Assistant. Today is ${dayName}, ${localNow.toISOString().split("T")[0]}.
         
         MISSION: Your goal is to help to manage the day by recommending the single most logical next step from the task list.
+        ${previousContextPrompt}
         
         CORE VALUES:
         - Impact: A professional task > a leisure task > a generic placeholder.
@@ -312,7 +339,7 @@ export async function executeUserPrompt(prompt: string, userOffset: string = "+0
   // Include database name in task context so the AI knows which DB each task belongs to
   const taskContext = tasks.map(t => `- Name: "${t.name}", ID: "${t.id}", Status: "${t.status || 'No Status'}", Deadline: "${t.deadline || 'No Deadline'}"${t.databaseName ? `, Database: "${t.databaseName}"` : ""}`).join("\n");
   const decision = await processUserPrompt(prompt, taskContext, userOffset, databaseNames);
-  
+
   let message = "";
   let aiSuggestion: AgentSuggestion | null = null;
   let finalThinkContext = decision.thinkContext || "";

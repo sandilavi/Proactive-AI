@@ -6,7 +6,7 @@ export async function POST(req: Request) {
     const body = await req.json();
     const tasks = body.tasks && body.tasks.length > 0 ? body.tasks : [];
 
-    const result = await getAgentSuggestion(tasks);
+    const result = await getAgentSuggestion(tasks, body.userOffset || "+00:00", body.previousSuggestion);
 
     return NextResponse.json({ 
       success: true, 

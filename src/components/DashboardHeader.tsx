@@ -20,6 +20,34 @@ type AgentAlert = {
     reason?: string;
 };
 
+const URGENCY_TIE_BREAKER: Record<string, number> = {
+  OVERDUE: 0,
+  TODAY: 1,
+  CAPACITY_BUSY: 2,
+  TOMORROW: 3,
+  SOON: 4
+};
+
+function getDeadlineTimeWeight(dateStr: string | undefined): number {
+  if (!dateStr || dateStr === "No Deadline") return Infinity;
+  const parsed = new Date(dateStr);
+  if (isNaN(parsed.getTime())) return Infinity;
+
+  const dText = String(dateStr).toUpperCase();
+  const hasTime = dText.includes('T') || dText.includes(':') || dText.includes('AM') || dText.includes('PM');
+  
+  if (hasTime) {
+    return parsed.getTime();
+  } else {
+    // Untimed task on a date (e.g. 2026-07-28):
+    // Position at 23:59:59.999 of that date so timed tasks on the same date come BEFORE it.
+    const year = parsed.getFullYear();
+    const month = parsed.getMonth();
+    const day = parsed.getDate();
+    return new Date(year, month, day, 23, 59, 59, 999).getTime();
+  }
+}
+
 const getFormattedAlertTime = (ms: number | undefined, timeString: string) => {
   if (!ms) return timeString;
   const now = new Date();
@@ -423,7 +451,21 @@ export default function DashboardHeader() {
                       .sort((a: any, b: any) => {
                         const timeA = typeof a.alertedAt === 'number' ? a.alertedAt : new Date(a.alertedAt || a.timestamp || 0).getTime();
                         const timeB = typeof b.alertedAt === 'number' ? b.alertedAt : new Date(b.alertedAt || b.timestamp || 0).getTime();
-                        return timeB - timeA; // Newest first (top), oldest last (bottom)
+                        
+                        // 1st Tiebreaker: Minute-level arrival time (newer minute on top, oldest on bottom)
+                        const minA = Math.floor(timeA / 60000);
+                        const minB = Math.floor(timeB / 60000);
+                        if (minA !== minB) return minB - minA;
+
+                        // 2nd Tiebreaker: Urgency badge (OVERDUE -> TODAY -> CAPACITY_BUSY -> TOMORROW -> SOON)
+                        const rankA = URGENCY_TIE_BREAKER[a.urgency] ?? 99;
+                        const rankB = URGENCY_TIE_BREAKER[b.urgency] ?? 99;
+                        if (rankA !== rankB) return rankA - rankB;
+
+                        // 3rd Tiebreaker: Deadline Chronology (Earliest deadline first: Jul 28 5am -> Jul 28 11pm -> Jul 28 untimed -> Jul 29)
+                        const deadA = getDeadlineTimeWeight(a.deadline || a.date);
+                        const deadB = getDeadlineTimeWeight(b.deadline || b.date);
+                        return deadA - deadB;
                       })
                       .map((alert: any) => {
                         const isBusy = alert.status === "BUSY";
@@ -579,6 +621,25 @@ export default function DashboardHeader() {
                       const shieldKey = `${toast.mitigationTaskName.toLowerCase().trim()}-${toast.mitigationTargetDate}`;
                       const expiry = resolutionShield[shieldKey];
                       return !expiry || Date.now() > expiry;
+                    })
+                    .sort((a: any, b: any) => {
+                      const timeA = typeof a.alertedAt === 'number' ? a.alertedAt : new Date(a.alertedAt || a.timestamp || 0).getTime();
+                      const timeB = typeof b.alertedAt === 'number' ? b.alertedAt : new Date(b.alertedAt || b.timestamp || 0).getTime();
+                      
+                      // 1st Tiebreaker: Minute-level arrival time (newer minute on top, oldest on bottom)
+                      const minA = Math.floor(timeA / 60000);
+                      const minB = Math.floor(timeB / 60000);
+                      if (minA !== minB) return minB - minA;
+
+                      // 2nd Tiebreaker: Urgency badge (OVERDUE -> TODAY -> CAPACITY_BUSY -> TOMORROW -> SOON)
+                      const rankA = URGENCY_TIE_BREAKER[a.urgency] ?? 99;
+                      const rankB = URGENCY_TIE_BREAKER[b.urgency] ?? 99;
+                      if (rankA !== rankB) return rankA - rankB;
+
+                      // 3rd Tiebreaker: Deadline Chronology (Earliest deadline first: Jul 28 5am -> Jul 28 11pm -> Jul 28 untimed -> Jul 29)
+                      const deadA = getDeadlineTimeWeight(a.deadline || a.date);
+                      const deadB = getDeadlineTimeWeight(b.deadline || b.date);
+                      return deadA - deadB;
                     })
                     .map(toast => {
                       const s = urgencyStyles[toast.urgency];

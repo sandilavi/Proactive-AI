@@ -211,8 +211,21 @@ export default function AgentEngine() {
 
             const currentUrgency = urgency; // Narrowing for TS safety
 
-            // Check if user was already alerted at this level or a more critical level
-            if (existingAlert) {
+            // Daily Overdue Reminder Rule:
+            // For OVERDUE tasks, re-fire an OS notification ONCE per day after midnight passes.
+            const dailyOverdueKey = `proactive_overdue_daily_${task.id}_${today}`;
+            const notifiedOverdueToday = typeof window !== "undefined" && localStorage.getItem(dailyOverdueKey) === "true";
+            const isDailyOverdueReminder = currentUrgency === "OVERDUE" && !notifiedOverdueToday;
+
+            if (isDailyOverdueReminder) {
+              isFreshAlert = true;
+              isFreshId = true;
+              alertedMs = Date.now();
+              alertTimestamp = nowString;
+              if (typeof window !== "undefined") {
+                localStorage.setItem(dailyOverdueKey, "true");
+              }
+            } else if (existingAlert) {
               const oldRank = urgencyRank[existingAlert.urgency];
               const newRank = urgencyRank[currentUrgency];
 
@@ -271,7 +284,7 @@ export default function AgentEngine() {
               const alertedKey = `proactive_alert_${task.id}_${currentUrgency}`;
               const alreadyFreshInSession = prevToasts.some(t => t.taskId === task.id && t.urgency === urgency);
               if (!alreadyFreshInSession) {
-                const urgentNotificationKey = `${task.id}-${urgency}`;
+                const urgentNotificationKey = `${task.id}-${urgency}-${today}`;
                 if (!notifiedUrgentRef.current.has(urgentNotificationKey)) {
                   // STAMP FIRST: Claim the slot before firing to prevent async race conditions
                   notifiedUrgentRef.current.add(urgentNotificationKey);
