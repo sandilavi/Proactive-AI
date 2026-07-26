@@ -387,8 +387,17 @@ export default function AgentEngine() {
             } catch { report = null; }
           }
 
+          let topUrgentTaskName: string | undefined = undefined;
+          try {
+            const cachedSug = localStorage.getItem("proactive_auto_suggestion");
+            if (cachedSug) {
+              const parsed = JSON.parse(cachedSug);
+              if (parsed?.suggestion) topUrgentTaskName = parsed.suggestion;
+            }
+          } catch (e) {}
+
           if (!report) {
-            report = await getCapacityInsights(freshTasks, userOffset, savedEstimatesForServer);
+            report = await getCapacityInsights(freshTasks, userOffset, savedEstimatesForServer, topUrgentTaskName);
           }
           if (report && report.insights && report.overallSummary) {
             // Persistence: Write fresh durations to the local vault.

@@ -13,10 +13,11 @@ It also features **Focus Horizon**, an AI-driven project roadmap generator that 
 - **Natural Language Commands** — Type commands like *"Add a task to submit thesis by tomorrow"* or *"Mark the API integration task as done"*
 - **Full CRUD on Notion** — Create, read, update, and delete tasks directly in your Notion database
 - **Multi-Database Support** — Connect multiple databases; the AI automatically infers and routes tasks to the most logical Notion database.
-- **AI-Powered Prioritization** — Ask *"Which task should I prioritize next?"* and get a reasoned, confidence-scored suggestion based on deadlines and status
+- **AI-Powered Prioritization & AI Choice** — Ask *"Which task should I prioritize next?"* and get an AI-reasoned suggestion, automatically highlighted as **AI Choice** across the dashboard and Strategy view
+- **Strategy & Workload View** — Real-time breakdown of daily capacity, workload allocation, and sorted task lists (timed vs. untimed, overdue, and completed)
 - **Focus Horizon (Strategic Planning)** — Describe a large project or goal. The AI analyzes your existing workload and generates a sequenced day-by-day roadmap, ensuring you never exceed a 10-hour workload hard cap.
 - **Smart Task Matching** — Fuzzy intent matching handles typos, filler words, and partial task names; returns `UNCLEAR` instead of making wrong edits
-- **Timezone-Aware Scheduling** — Dates like "tomorrow", "next Friday", or "at 3pm" are resolved mathematically using your local timezone
+- **Timezone-Aware & 12-Hour Formatting** — Dates and times (e.g. "tomorrow at 3pm") are resolved in your local timezone, formatted with 12-hour clock (e.g., `Jul 26, 2026, 3:00 PM`), and ordered chronologically
 - **Rate Limit Resilience** — Intelligent caching and fingerprinting minimizes API calls. If Groq rate limits are hit, the UI gracefully enters a cooldown state while preserving memory.
 - **Out-of-Scope Guard** — Non-task questions (e.g. "what's the weather?") are gracefully deflected
 

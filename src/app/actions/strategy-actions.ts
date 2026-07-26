@@ -37,7 +37,8 @@ let rateLimitCooldownUntil = 0;
 export async function getCapacityInsights(
   tasks: NotionTask[],
   userOffset: string,
-  persistentMemory?: Record<string, number>
+  persistentMemory?: Record<string, number>,
+  protectedTaskName?: string
 ): Promise<CapacityReport> {
   const [sign, h, m] = userOffset.match(/([+-])(\d{2}):(\d{2})/)?.slice(1) || ["+", "0", "0"];
   const offsetMs = (parseInt(h) * 60 + parseInt(m)) * 60000 * (sign === "+" ? 1 : -1);
@@ -97,7 +98,7 @@ export async function getCapacityInsights(
     if (cached.insights && cached.insights.length > 0) return cached;
   }
 
-  const result = await runCapacityAnalysis(tasks, userOffset);
+  const result = await runCapacityAnalysis(tasks, userOffset, protectedTaskName);
 
   if (result?.insights && Array.isArray(result.insights)) {
     result.insights.forEach(day => {
@@ -119,7 +120,7 @@ export async function getCapacityInsights(
   return result;
 }
 
-async function runCapacityAnalysis(tasks: NotionTask[], userOffset: string): Promise<CapacityReport> {
+async function runCapacityAnalysis(tasks: NotionTask[], userOffset: string, protectedTaskName?: string): Promise<CapacityReport> {
   const [sign, h, m] = userOffset.match(/([+-])(\d{2}):(\d{2})/)?.slice(1) || ["+", "0", "0"];
   const offsetMs = (parseInt(h) * 60 + parseInt(m)) * 60000 * (sign === "+" ? 1 : -1);
   const localNow = new Date(new Date().getTime() + offsetMs);
@@ -276,8 +277,8 @@ async function runCapacityAnalysis(tasks: NotionTask[], userOffset: string): Pro
             content: `You are a Capacity Mitigation Consultant.
             CORE CONSTRAINTS:
             - STRATEGY: Reschedule tasks from BUSY days to the NEAREST safe date (including Today or Tomorrow) that has available capacity (so that the target date's total workload remains < 10 hours). Only suggest rescheduling the minimum number of tasks necessary to bring the busy source day's workload down to a safe level (aim for 8.0 to 9.9 hours remaining). Do not over-mitigate by moving more tasks than necessary.
+            ${protectedTaskName ? `- PROTECTED TOP URGENT TASK: The task "${protectedTaskName}" is currently identified as the user's top critical priority for immediate execution. You MUST NEVER recommend moving "${protectedTaskName}" to a future date under any circumstances! Protect it and select other candidate tasks on that busy day to rebalance workload.` : '- IMPORTANCE-FIRST: Suggest moving the LEAST IMPORTANT tasks first.'}
             - CUMULATIVE CAPACITY: You must track the cumulative hours added to each target date by your recommendations. If you suggest moving multiple tasks to the same target date, the sum of those tasks' estimated hours plus that date's original workload must remain strictly less than 10 hours. If a target date's cumulative workload reaches or exceeds 10 hours, you must distribute any subsequent rescheduled tasks to other safe days (such as subsequent days) that still have capacity.
-            - IMPORTANCE-FIRST: Suggest moving the LEAST IMPORTANT tasks first.
             - EXACT NAMES: The "mitigationTaskName" in the JSON must match the original task name EXACTLY (character-for-character, including casing, spaces, and spelling). Do not rephrase or correct the spelling of task names under any circumstances.
             - OUTPUT: Strict JSON schema.
             
@@ -320,6 +321,11 @@ async function runCapacityAnalysis(tasks: NotionTask[], userOffset: string): Pro
       for (const mit of (mitData?.mitigations || [])) {
         // Reject incomplete AI mitigations missing task name or target date
         if (!mit.mitigationTaskName || !mit.mitigationTargetDate) continue;
+
+        // Hard Guard: Never reschedule the protected top urgent task away
+        if (protectedTaskName && mit.mitigationTaskName.toLowerCase().trim() === protectedTaskName.toLowerCase().trim()) {
+          continue;
+        }
 
         // Normalize date: try to extract YYYY-MM-DD from whatever format AI returned
         let mitDate = mit.date || "";

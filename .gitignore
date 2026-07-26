@@ -42,8 +42,3 @@ next-env.d.ts
 
 # local history
 .history/
-
-# Thesis Files
-Thesis.pdf
-Thesis.txt
-Thesis_Images/

@@ -42,6 +42,23 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
   const [loading, setLoading] = useState(true);
   const [thinkOpen, setThinkOpen] = useState(false);
   const [reportUpdatedAt, setReportUpdatedAt] = useState<number | null>(null);
+  const [topUrgentTaskName, setTopUrgentTaskName] = useState<string | null>(null);
+
+  // Sync top urgent task from localStorage
+  useEffect(() => {
+    const syncTopUrgent = () => {
+      try {
+        const cachedSug = localStorage.getItem("proactive_auto_suggestion");
+        if (cachedSug) {
+          const parsed = JSON.parse(cachedSug);
+          if (parsed?.suggestion) setTopUrgentTaskName(parsed.suggestion);
+        }
+      } catch (e) {}
+    };
+    syncTopUrgent();
+    window.addEventListener('notion-tasks-updated', syncTopUrgent);
+    return () => window.removeEventListener('notion-tasks-updated', syncTopUrgent);
+  }, []);
 
   // Restore cached report from localStorage on mount (no server-side AI call anymore)
   useEffect(() => {
@@ -161,7 +178,16 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
           else if (byName !== undefined) savedEstimatesForServer[compound] = byName;
         });
 
-        const data = await getCapacityInsights(freshTasks, userOffset, savedEstimatesForServer);
+        let topUrgentTaskName: string | undefined = undefined;
+        try {
+          const cachedSug = localStorage.getItem("proactive_auto_suggestion");
+          if (cachedSug) {
+            const parsed = JSON.parse(cachedSug);
+            if (parsed?.suggestion) topUrgentTaskName = parsed.suggestion;
+          }
+        } catch (e) {}
+
+        const data = await getCapacityInsights(freshTasks, userOffset, savedEstimatesForServer, topUrgentTaskName);
 
         // Update fingerprints only after a successful (non-cooldown) call
         const isRateLimitResponse = data?.overallSummary?.includes("Rate Limit");
@@ -667,6 +693,12 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                       const scoreA = infoA.isOverdue || infoA.isPast ? 2 : 1;
                       const scoreB = infoB.isOverdue || infoB.isPast ? 2 : 1;
 
+                      // 0. AI Top Focus task comes FIRST
+                      const isTopFocusA = topUrgentTaskName && a.name.toLowerCase().trim() === topUrgentTaskName.toLowerCase().trim();
+                      const isTopFocusB = topUrgentTaskName && b.name.toLowerCase().trim() === topUrgentTaskName.toLowerCase().trim();
+                      if (isTopFocusA && !isTopFocusB) return -1;
+                      if (!isTopFocusA && isTopFocusB) return 1;
+
                       // 1. Overdue/past tasks first
                       if (scoreA !== scoreB) {
                         return scoreB - scoreA;
@@ -691,6 +723,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
 
                     return sortedTasks.map((t, tidx) => {
                       const task = t as any;
+                      const isTopFocus = topUrgentTaskName && t.name.toLowerCase().trim() === topUrgentTaskName.toLowerCase().trim();
                       let dueTimeStr: string | null = null;
                       let wasDueStr: string | null = null;
                       let isTimePast = false;
@@ -703,7 +736,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                           if (h !== 0 || m !== 0) {
                             const parsed = new Date(dl);
                             if (!isNaN(parsed.getTime())) {
-                              dueTimeStr = parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                              dueTimeStr = parsed.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
                               if (!task.isOverdue && parsed.getTime() < Date.now()) {
                                 isTimePast = true;
                               }
@@ -718,17 +751,36 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                         }
                       }
                       return (
-                        <div key={tidx} className="flex flex-col border-l border-slate-200 pl-3 py-0.5">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-xs font-semibold text-slate-700 truncate max-w-xs">{t.name}</span>
-                            {(task.isOverdue || isTimePast) && (
-                              <span className="text-[8px] font-bold px-1 py-0.5 rounded bg-red-50 text-red-600 border border-red-100 uppercase tracking-wide shrink-0">Overdue</span>
-                            )}
+                        <div key={tidx} className={`flex flex-col transition-all ${
+                          isTopFocus 
+                            ? 'bg-indigo-50/90 border-l-4 border-indigo-500 shadow-sm ring-1 ring-indigo-200 my-1 pl-2 pr-1 py-1 rounded-r' 
+                            : 'border-l border-slate-200 pl-3 py-0.5'
+                        }`}>
+                          {/* Row 1: Task Name */}
+                          <div className="font-semibold text-xs text-slate-800 break-words">
+                            <span className={isTopFocus ? 'text-indigo-950 font-bold' : 'text-slate-800'}>
+                              {t.name}
+                            </span>
                           </div>
-                          <div className="flex items-center gap-2.5 mt-0.5">
-                            <span className="text-[9px] font-bold text-slate-400 uppercase">Est. time: {t.estimatedHours || 1.5}h</span>
+
+                          {/* Row 2: OVERDUE badge */}
+                          {(task.isOverdue || isTimePast) && (
+                            <div className="mt-0.5">
+                              <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide inline-block ${
+                                isTopFocus ? 'bg-red-100 text-red-700 border border-red-200' : 'bg-red-50 text-red-600 border border-red-100'
+                              }`}>
+                                Overdue
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Row 3: Est. Time & Due Date/Time (Single Row, No Truncation) */}
+                          <div className="flex items-center gap-2.5 mt-0.5 text-[9px] flex-wrap sm:flex-nowrap">
+                            <span className={`font-bold uppercase shrink-0 ${isTopFocus ? 'text-indigo-700' : 'text-slate-400'}`}>
+                              Est. time: {t.estimatedHours || 1.5}h
+                            </span>
                             {(wasDueStr || dueTimeStr) && (
-                              <span className={`text-[9px] font-medium whitespace-nowrap ${(wasDueStr || isTimePast) ? 'text-red-400' : 'text-slate-500'}`}>
+                              <span className={`font-medium whitespace-nowrap ${(wasDueStr || isTimePast) ? 'text-red-400' : 'text-slate-500'}`}>
                                 {wasDueStr && dueTimeStr
                                   ? `Was due ${wasDueStr} at ${dueTimeStr}`
                                   : wasDueStr
@@ -739,6 +791,15 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                               </span>
                             )}
                           </div>
+
+                          {/* Row 4: AI Top Focus Badge */}
+                          {isTopFocus && (
+                            <div className="mt-1">
+                              <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-indigo-600 text-white uppercase tracking-wider inline-flex items-center gap-1 shadow-sm">
+                                <Sparkles size={9} /> AI Choice
+                              </span>
+                            </div>
+                          )}
                         </div>
                       );
                     });
