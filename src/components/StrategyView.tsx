@@ -339,7 +339,7 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
             alerts: capacityAlerts,
             summary: data.overallSummary,
             deadlineFingerprint: currentFingerprint,
-            updatedAt: existingCachedAlerts.updatedAt || generatedAtTime
+            updatedAt: generatedAtTime
           }));
           window.dispatchEvent(new Event('capacity-alerts-updated'));
           setReport(reportWithMeta);
@@ -795,8 +795,8 @@ export default function StrategyView({ tasks, initialReport }: StrategyViewProps
                           {/* Row 4: AI Top Focus Badge */}
                           {isTopFocus && (
                             <div className="mt-1">
-                              <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-indigo-600 text-white uppercase tracking-wider inline-flex items-center gap-1 shadow-sm">
-                                <Sparkles size={9} /> AI Choice
+                              <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-indigo-600 text-white uppercase tracking-wider inline-flex items-center gap-1 shadow-[0_0_12px_rgba(99,102,241,0.8)] animate-pulse border border-indigo-400/60">
+                                <Sparkles size={9} className="animate-spin" style={{ animationDuration: '3s' }} /> AI Choice
                               </span>
                             </div>
                           )}

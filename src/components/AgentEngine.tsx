@@ -283,7 +283,7 @@ export default function AgentEngine() {
             if (isFreshAlert) {
               const alertedKey = `proactive_alert_${task.id}_${currentUrgency}`;
               const alreadyFreshInSession = prevToasts.some(t => t.taskId === task.id && t.urgency === urgency);
-              if (!alreadyFreshInSession) {
+              if (!alreadyFreshInSession || isDailyOverdueReminder) {
                 const urgentNotificationKey = `${task.id}-${urgency}-${today}`;
                 if (!notifiedUrgentRef.current.has(urgentNotificationKey)) {
                   // STAMP FIRST: Claim the slot before firing to prevent async race conditions
