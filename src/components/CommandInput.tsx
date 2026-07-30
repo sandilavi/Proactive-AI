@@ -18,12 +18,13 @@ interface ProactiveAlert {
 }
 
 // Function To Classify Deadlines
-function classifyDeadline(deadline: string): ProactiveAlert["urgency"] | null {
+type TaskUrgency = "OVERDUE" | "TODAY" | "TOMORROW" | "SOON";
+function getTaskUrgency(deadline: string): TaskUrgency | null {
   if (!deadline || deadline === "No Deadline") return null;
-
   const now = new Date();
   const deadlineDate = new Date(deadline);
-  const hasTime = deadline.includes("T");
+  const dText = deadline.toUpperCase();
+  const hasTime = dText.includes("T") || dText.includes(":") || dText.includes("AM") || dText.includes("PM");
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const deadlineDay = new Date(deadlineDate); deadlineDay.setHours(0, 0, 0, 0);
@@ -34,8 +35,8 @@ function classifyDeadline(deadline: string): ProactiveAlert["urgency"] | null {
 
   if (diffDays < 0) return "OVERDUE";              // Past calendar day → always overdue
   if (diffDays === 0) {
-    // Due today: only mark OVERDUE if it has a specific time AND that time has passed
-    if (hasTime && deadlineDate < now) return "OVERDUE";
+    // Due today: mark OVERDUE if it has a specific time AND that time has hit or passed
+    if (hasTime && deadlineDate.getTime() <= now.getTime()) return "OVERDUE";
     return "TODAY";                                // Still pending today (or date-only)
   }
   if (diffDays === 1) return "TOMORROW";           // Due tomorrow → orange
@@ -809,50 +810,82 @@ export default function CommandInput({ initialTasks, databases = [] }: CommandIn
                       });
 
                       doneTasks.sort((a, b) => {
-                        const timeA = a.deadline ? new Date(a.deadline).getTime() : 0;
-                        const timeB = b.deadline ? new Date(b.deadline).getTime() : 0;
-                        return timeB - timeA; // Newest deadline first, oldest last
+                        const getDeadlineInfo = (deadlineStr?: string) => {
+                          if (!deadlineStr || deadlineStr === "No Deadline") {
+                            return { dateStr: "0000-00-00", hasTime: false, timeMs: 0 };
+                          }
+                          const clean = deadlineStr.trim();
+                          const datePart = clean.substring(0, 10);
+                          const hasTime = clean.length > 10 && (clean.includes("T") || clean.includes(":") || clean.includes(" "));
+                          const d = new Date(clean);
+                          const timeMs = isNaN(d.getTime()) ? 0 : d.getTime();
+                          return { dateStr: datePart, hasTime, timeMs };
+                        };
+
+                        const infoA = getDeadlineInfo(a.deadline);
+                        const infoB = getDeadlineInfo(b.deadline);
+
+                        // 1. Primary: Sort by Date descending (newer dates first)
+                        if (infoA.dateStr !== infoB.dateStr) {
+                          return infoB.dateStr.localeCompare(infoA.dateStr);
+                        }
+
+                        // 2. Secondary: Same Date group — date-only task (no time) goes to the TOP
+                        if (!infoA.hasTime && infoB.hasTime) return -1;
+                        if (infoA.hasTime && !infoB.hasTime) return 1;
+
+                        // 3. Tertiary: Both have times — later time comes first so earliest time ends up at the BOTTOM
+                        return infoB.timeMs - infoA.timeMs;
                       });
 
                       return [...activeTasks, ...doneTasks];
                     })().map((task) => {
-                       const status = (task.status || "Planned").toUpperCase();
-                       const isDone = status.includes("DONE") || status.includes("COMPLETE");
-                       const isDoing = status.includes("DOING") || status.includes("PROGRESS");
-                       const statusStyles = isDone ? "bg-emerald-50 text-emerald-700 border-emerald-100" : 
-                                          isDoing ? "bg-blue-50 text-blue-700 border-blue-100" : 
-                                          "bg-amber-50 text-amber-700 border-amber-100";
-                       const dotColor = isDone ? "bg-emerald-500" : isDoing ? "bg-blue-500" : "bg-amber-500";
+                      const status = (task.status || "Planned").toUpperCase();
+                      const isDone = status.includes("DONE") || status.includes("COMPLETE");
+                      const isDoing = status.includes("DOING") || status.includes("PROGRESS");
 
-                       return (
-                        <tr key={task.id} className="hover:bg-slate-50/50">
-                          <td className="px-4 py-3">
-                            <span className="font-semibold text-slate-800 block max-w-xs md:max-w-md truncate" title={task.name}>
-                              {task.name}
+                      const urgency = !isDone && task.deadline ? getTaskUrgency(task.deadline) : null;
+                      const isOverdue = urgency === "OVERDUE";
+
+                      const rowStyles = isOverdue
+                        ? "bg-red-100/60"
+                        : "hover:bg-slate-50/50 transition-colors";
+
+                      const statusStyles = isDone ? "bg-emerald-50 text-emerald-700 border-emerald-100" :
+                                         isOverdue ? "bg-red-100 text-red-800 border-red-200 font-bold" :
+                                         isDoing ? "bg-blue-50 text-blue-700 border-blue-100" : 
+                                         "bg-amber-50 text-amber-700 border-amber-100";
+                      const dotColor = isDone ? "bg-emerald-500" : isOverdue ? "bg-red-500" : isDoing ? "bg-blue-500" : "bg-amber-500";
+
+                      return (
+                       <tr key={task.id} className={rowStyles}>
+                         <td className="px-4 py-3">
+                           <span className="font-semibold text-slate-800 block max-w-xs md:max-w-md truncate" title={task.name}>
+                             {task.name}
+                           </span>
+                         </td>
+                         <td className="px-4 py-3">
+                             <span className={`inline-flex items-center gap-1.5 border ${statusStyles} px-2.5 py-0.5 rounded text-[10px] font-bold uppercase`}>
+                               <div className={`w-1 h-1 rounded-full ${dotColor}`} />
+                               {task.status || "Planned"}
                             </span>
-                          </td>
-                          <td className="px-4 py-3">
-                              <span className={`inline-flex items-center gap-1.5 border ${statusStyles} px-2.5 py-0.5 rounded text-[10px] font-bold uppercase`}>
-                                <div className={`w-1 h-1 rounded-full ${dotColor}`} />
-                                {task.status || "Planned"}
+                         </td>
+                         <td className="px-4 py-3 whitespace-nowrap">
+                           <span className="text-slate-600 font-medium">
+                             {task.deadline ? (
+                                <span className={isOverdue ? "text-red-700 font-bold" : "text-slate-800"}>{formatDeadline(task.deadline)}</span>
+                             ) : <span className="text-slate-400 italic font-normal">No deadline</span>}
+                           </span>
+                         </td>
+                         {databaseCount > 1 && (
+                           <td className="px-4 py-3">
+                             <span className="text-slate-500 font-medium">
+                               {task.databaseName || "Source"}
                              </span>
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap">
-                            <span className="text-slate-600 font-medium">
-                              {task.deadline ? (
-                                 <span className="text-slate-800">{formatDeadline(task.deadline)}</span>
-                              ) : <span className="text-slate-400 italic font-normal">No deadline</span>}
-                            </span>
-                          </td>
-                          {databaseCount > 1 && (
-                            <td className="px-4 py-3">
-                              <span className="text-slate-500 font-medium">
-                                {task.databaseName || "Source"}
-                              </span>
-                            </td>
-                          )}
-                        </tr>
-                      );
+                           </td>
+                         )}
+                       </tr>
+                     );
                     })}
                   </tbody>
                 </table>

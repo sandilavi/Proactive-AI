@@ -224,6 +224,8 @@ export default function AgentEngine() {
               alertTimestamp = nowString;
               if (typeof window !== "undefined") {
                 localStorage.setItem(dailyOverdueKey, "true");
+                const alertedKey = `proactive_alert_${task.id}_${currentUrgency}`;
+                localStorage.setItem(alertedKey, JSON.stringify({ alertedAt: alertedMs, displayTime: alertTimestamp, originalUrgency: currentUrgency }));
               }
             } else if (existingAlert) {
               const oldRank = urgencyRank[existingAlert.urgency];
@@ -237,9 +239,23 @@ export default function AgentEngine() {
                 isFreshId = true;
               } else {
                 // Task is same or less critical (already notified)
-                // PRESERVE the original "alertedAt" to keep the ID stable and avoid ghost "NEW" badges
-                alertTimestamp = existingAlert.timestamp;
-                alertedMs = existingAlert.alertedAt || Date.now();
+                // Prefer the updated persistent memory timestamp if available for today
+                const alertedKey = `proactive_alert_${task.id}_${currentUrgency}`;
+                let updatedMemoryTime: string | null = null;
+                let updatedMemoryMs: number | null = null;
+                try {
+                  const savedMemory = typeof window !== "undefined" ? localStorage.getItem(alertedKey) : null;
+                  if (savedMemory) {
+                    const parsed = JSON.parse(savedMemory);
+                    if (parsed.displayTime && parsed.alertedAt) {
+                      updatedMemoryTime = parsed.displayTime;
+                      updatedMemoryMs = parsed.alertedAt;
+                    }
+                  }
+                } catch (e) {}
+
+                alertTimestamp = updatedMemoryTime || existingAlert.timestamp;
+                alertedMs = updatedMemoryMs || existingAlert.alertedAt || Date.now();
                 isFreshAlert = false;
                 isFreshId = false;
               }
@@ -280,7 +296,7 @@ export default function AgentEngine() {
               }
             }
 
-            if (isFreshAlert) {
+            if (isFreshAlert || isDailyOverdueReminder) {
               const alertedKey = `proactive_alert_${task.id}_${currentUrgency}`;
               const alreadyFreshInSession = prevToasts.some(t => t.taskId === task.id && t.urgency === urgency);
               if (!alreadyFreshInSession || isDailyOverdueReminder) {
@@ -288,6 +304,11 @@ export default function AgentEngine() {
                 if (!notifiedUrgentRef.current.has(urgentNotificationKey)) {
                   // STAMP FIRST: Claim the slot before firing to prevent async race conditions
                   notifiedUrgentRef.current.add(urgentNotificationKey);
+
+                  if (isDailyOverdueReminder) {
+                    alertTimestamp = nowString;
+                    alertedMs = Date.now();
+                  }
 
                   if (typeof window !== "undefined") {
                     localStorage.setItem(alertedKey, JSON.stringify({ alertedAt: alertedMs, displayTime: alertTimestamp, originalUrgency: currentUrgency }));
@@ -309,8 +330,13 @@ export default function AgentEngine() {
               }
             }
 
+            if (isDailyOverdueReminder) {
+              alertTimestamp = nowString;
+              alertedMs = Date.now();
+            }
+
             urgentAlerts.push({
-              id: isFreshId ? `${task.id}-${urgency}-${alertedMs}` : existingAlert?.id || `${task.id}-${urgency}-${alertedMs}`,
+              id: (isFreshId || isDailyOverdueReminder) ? `${task.id}-${urgency}-${alertedMs}` : existingAlert?.id || `${task.id}-${urgency}-${alertedMs}`,
               taskId: task.id,
               taskName: task.name,
               urgency,
@@ -318,7 +344,7 @@ export default function AgentEngine() {
               date: task.deadline ?? "",
               timestamp: alertTimestamp,
               alertedAt: alertedMs,
-              read: isFreshId ? false : (existingAlert?.read || false)
+              read: (isFreshId || isDailyOverdueReminder) ? false : (existingAlert?.read || false)
             });
           }
         }
@@ -581,10 +607,11 @@ export default function AgentEngine() {
 
             const lastData = JSON.parse(localStorage.getItem("proactive_capacity_alerts") || "{}");
 
+            const engineNow = Date.now();
             localStorage.setItem("proactive_capacity_alerts", JSON.stringify({
               alerts: filteredCapacityAlerts,
               summary: report.overallSummary,
-              updatedAt: (deadlineChanged || !lastData.updatedAt) ? Date.now() : lastData.updatedAt
+              updatedAt: engineNow
             }));
 
             if (deadlineChanged) {
@@ -594,7 +621,7 @@ export default function AgentEngine() {
             // Sync full report & strategy fingerprint keys so StrategyView reuses today's fresh analysis
             localStorage.setItem("proactive_capacity_full_report", JSON.stringify({
               ...report,
-              updatedAt: (deadlineChanged || !lastData.updatedAt) ? Date.now() : lastData.updatedAt
+              updatedAt: engineNow
             }));
             localStorage.setItem("proactive_capacity_fingerprint_strategy", strategyTaskFingerprint);
             localStorage.setItem("proactive_capacity_last_day_strategy", today);
